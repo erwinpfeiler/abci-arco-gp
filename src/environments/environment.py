@@ -10,7 +10,7 @@ import torch
 
 from src.config import EnvironmentConfig
 from src.environments.experiment import Experiment, gather_data, get_exp_param_dicts
-from src.mechanism_models.mechanisms import GaussianProcess, GaussianRootNode, resolve_mechanism_key
+from src.mechanism_models.mechanisms import GaussianProcess, GaussianRootNode, AdditiveSigmoids, resolve_mechanism_key
 from src.utils.graphs import get_parents, graph_to_adj_mat, dag_to_cpdag
 
 
@@ -141,6 +141,11 @@ class Environment:
         if self.cfg.mechanism_model == 'gp-model':
             if num_parents > 0:
                 return GaussianProcess(num_parents, static=True, linear=self.cfg.linear)
+            else:
+                return GaussianRootNode(static=True)
+        elif self.cfg.mechanism_model == 'additive-sigmoids':
+            if num_parents > 0:
+                return AdditiveSigmoids(num_parents)
             else:
                 return GaussianRootNode(static=True)
 

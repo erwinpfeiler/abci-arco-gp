@@ -84,6 +84,39 @@ class GaussianRootNodeConfig:
         self.beta_0 = param_dict['beta_0']
 
 
+class AdditiveSigmoidsConfig:
+    # prior hyperparameters
+    noise_var_concentration: float = 50.
+    noise_var_rate: float = 50.
+    lscale_lower: float = 0.5
+    lscale_upper: float = 2.
+    offset_lower: float = -2.
+    offset_upper: float = 2.
+    outscale_concentration: float = 50.
+    outscale_rate: float = 10.
+
+    def param_dict(self) -> Dict[str, Any]:
+        params = {'noise_var_concentration': self.noise_var_concentration,
+                  'noise_var_rate': self.noise_var_rate,
+                  'lscale_lower': self.lscale_lower,
+                  'lscale_upper': self.lscale_upper,
+                  'offset_lower': self.offset_lower,
+                  'offset_upper': self.offset_upper,
+                  'outscale_rate': self.outscale_rate,
+                  'outscale_concentration': self.outscale_concentration, }
+        return params
+
+    def load_param_dict(self, param_dict):
+        self.noise_var_concentration = param_dict['noise_var_concentration']
+        self.noise_var_rate = param_dict['noise_var_rate']
+        self.lscale_lower = param_dict['lscale_lower']
+        self.lscale_upper = param_dict['lscale_upper']
+        self.offset_lower = param_dict['offset_lower']
+        self.offset_upper = param_dict['offset_upper']
+        self.outscale_rate = param_dict['outscale_rate']
+        self.outscale_concentration = param_dict['outscale_concentration']
+
+
 class GaussianProcessConfig:
     num_support_points: int = 50
     support_min: float = -10.

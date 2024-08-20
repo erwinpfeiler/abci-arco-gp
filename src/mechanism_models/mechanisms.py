@@ -8,7 +8,7 @@ import torch.distributions as dist
 from torch.nn import Module, ModuleDict
 from torch.nn.utils import vector_to_parameters
 
-from src.config import GaussianRootNodeConfig, GaussianProcessConfig, use_gpu
+from src.config import GaussianRootNodeConfig, GaussianProcessConfig, AdditiveSigmoidsConfig, use_gpu
 from src.utils.utils import get_module_params
 
 
@@ -876,3 +876,89 @@ class SharedDataGaussianProcess(Mechanism):
                                                                          param_dict=param_dict['gp_param_dict'])
         else:
             self.gp = SharedDataGaussianProcess.SharedDataGPRQKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
+
+
+class AdditiveSigmoids(Mechanism):
+    '''
+    Static mechanism for generating ground truth environments as suggested in Buhlmann, P., Peters, J., and Ernest, J.
+    "CAM: Causal additive models, high-dimensional order search and penalized regression." Annals of Statistics, 2014.
+    '''
+    noise: torch.Tensor
+    outscales: torch.Tensor
+    lengthscales: torch.Tensor
+    offsets: torch.Tensor
+
+    def __init__(self, in_size: int, cfg: AdditiveSigmoidsConfig = None, param_dict: Dict[str, Any] = None):
+        super().__init__(in_size)
+        if param_dict is not None:
+            self.load_param_dict(param_dict)
+        else:
+            # load config
+            self.cfg = AdditiveSigmoidsConfig() if cfg is None else cfg
+
+            # init hp priors
+            # ATTENTION: do not name the HP priors "noise_prior"
+            self.noise_var_prior = dist.Gamma(self.cfg.noise_var_concentration, self.cfg.noise_var_rate)
+            self.outscale_prior = dist.Gamma(self.cfg.outscale_concentration, self.cfg.outscale_rate)
+            self.lscale_prior = dist.Uniform(self.cfg.lscale_lower, self.cfg.lscale_upper)
+            self.offset_prior = dist.Uniform(self.cfg.offset_lower, self.cfg.offset_upper)
+            self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
+
+            # initialize likelihood and parameters
+            self.init_hyperparams()
+
+    def init_hyperparams(self):
+        noise_var = self.noise_var_prior.sample()
+        self.noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
+        self.outscales = self.outscale_prior.sample(torch.Size((self.in_size,)))
+        if torch.rand(1).round():
+            self.outscales = -self.outscales
+        self.lengthscales = self.lscale_prior.sample(torch.Size((self.in_size,)))
+        self.offsets = self.offset_prior.sample(torch.Size((self.in_size,)))
+
+    def forward(self, inputs: torch.Tensor, prior_mode=False):
+        self._check_args(inputs)
+        output_shape = (*inputs.shape[:-1], 1)
+
+        self.eval()
+        tmp = self.lengthscales * (inputs + self.offsets)
+        components = self.outscales * tmp / (1. + tmp.abs())
+        outputs = components.sum(dim=-1, keepdims=True)
+        assert outputs.shape == output_shape, print(outputs.shape)
+        return outputs
+
+    def sample(self, inputs: torch.Tensor, prior_mode=False):
+        self._check_args(inputs)
+        output_shape = (*inputs.shape[:-1], 1)
+
+        means = self(inputs)
+        y_dist = self.likelihood(means)
+        return y_dist.sample().view(output_shape)
+
+    def mll(self, inputs: torch.Tensor, targets: torch.Tensor, reduce=True):
+        means = self(inputs)
+        y_dist = self.likelihood(means)
+        mlls = y_dist.log_prob(targets).squeeze(-1)
+
+        if reduce:
+            return mlls.sum()
+        return mlls
+
+    def param_dict(self) -> Dict[str, Any]:
+        params = {'in_size': self.in_size,
+                  'noise': self.noise,
+                  'outscales': self.outscales,
+                  'lengthscales': self.lengthscales,
+                  'offsets': self.offsets,
+                  'cfg_param_dict': self.cfg.param_dict()}
+
+        return params
+
+    def load_param_dict(self, param_dict):
+        self.cfg = AdditiveSigmoidsConfig()
+        self.cfg.load_param_dict(param_dict['cfg_param_dict'])
+        self.in_size = param_dict['in_size']
+        self.noise = param_dict['noise']
+        self.outscales = param_dict['outscales']
+        self.lengthscales = param_dict['lengthscales']
+        self.offsets = param_dict['offsets']
