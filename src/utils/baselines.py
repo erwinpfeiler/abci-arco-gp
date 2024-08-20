@@ -1,6 +1,7 @@
 import os
 from typing import Union, Callable, List, Tuple
 
+import gpytorch
 import numpy as np
 import pandas as pd
 import sumu
@@ -9,9 +10,12 @@ from castle.algorithms import GES, DAG_GNN, GOLEM, GraNDAG, ANMNonlinear, PC, GA
 from causallearn.graph.GraphClass import CausalGraph
 from causallearn.graph.GraphClass import GeneralGraph
 from causallearn.search.PermutationBased.GRaSP import grasp
+from lingam import RESIT
 from scipy.stats import multivariate_t as mvt
 
+from src.config import GPModelConfig
 from src.environments.environment import Environment
+from src.mechanism_models.mechanisms import GaussianProcess
 from src.utils.graphs import dag_to_cpdag
 from src.utils.metrics import compute_structure_metrics, aid
 from src.utils.utils import export_stats
@@ -46,6 +50,60 @@ def graph_expectation(graphs: torch.Tensor, func: Callable) -> torch.Tensor:
     return func_values.mean()
 
 
+class GPRegressor:
+    def __init__(self, linear: bool = False):
+        self.linear = linear
+        self.gp = None
+
+    def fit(self, inputs: torch.Tensor, targets: torch.Tensor):
+        inputs = torch.tensor(inputs) if not isinstance(inputs, torch.Tensor) else inputs
+        targets = torch.tensor(targets) if not isinstance(targets, torch.Tensor) else targets
+        assert inputs.dim() == 2 and targets.dim() == 1 and inputs.shape[0] == targets.numel()
+        num_samples, num_parents = inputs.shape
+
+        cfg = GPModelConfig()
+        self.gp = GaussianProcess(num_parents, linear=self.linear)
+        self.gp.set_data(inputs, targets)
+        self.gp.train()
+
+        # fit GP hyperparameters
+        optimizer = torch.optim.RMSprop(self.gp.parameters(), lr=cfg.lr)
+        losses = []
+        for i in range(cfg.num_steps):
+            optimizer.zero_grad()
+            try:
+                mll = self.gp.mll(inputs, targets, prior_mode=True) / targets.numel()
+            except Exception as e:
+                print(
+                    f'Exception occured in GaussianProcessModel.gp_mlls() when computing MLL:')
+                print(e)
+                print('Resampling GP hyperparameters...')
+                self.gp.gp.init_hyperparams()
+                continue
+
+            loss = -mll - self.gp.gp.hyperparam_log_prior()
+
+            loss.backward()
+            optimizer.step()
+            losses.append(loss.item())
+
+            if i > cfg.es_min_steps:
+                change = (torch.tensor(losses[-1 - cfg.es_win_size:-1]).mean() -
+                          torch.tensor(losses[-2 - cfg.es_win_size:-2]).mean()).abs()
+                if change < cfg.es_threshold:
+                    break
+
+    def predict(self, inputs: torch.Tensor):
+        assert self.gp is not None
+        inputs = torch.tensor(inputs) if not isinstance(inputs, torch.Tensor) else inputs
+        with torch.no_grad():
+            with gpytorch.settings.debug(state=False):  # avoid annoying warning that train data matches test data
+                self.gp.eval()
+                predictions = self.gp(inputs).view(-1).numpy()
+
+        return predictions
+
+
 class Baseline:
 
     def __init__(self, env: Union[Environment, str], method: str, output_dir: str = None, run_id: str = '',
@@ -59,6 +117,7 @@ class Baseline:
     def run(self):
         # load data
         if self.policy == 'static-obs-dataset':
+            # data shape will be (num_samples, num_nodes)
             data = self.env.observational_train_data[0].to_pandas_df(self.env.node_labels).to_numpy()
         else:
             raise NotImplementedError
@@ -101,6 +160,13 @@ class Baseline:
             model.learn(data)
             graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
             cpdag_prediction = True
+        elif self.method == 'resit':
+            if self.env.cfg.linear:
+                print('RESIT: using linear GP regressor.')
+            torch.set_default_dtype(torch.float32)
+            model = RESIT(regressor=GPRegressor(linear=self.env.cfg.linear))
+            model.fit(data)
+            graphs = torch.tensor(model.adjacency_matrix_).unsqueeze(0)
         else:
             raise NotImplementedError
 

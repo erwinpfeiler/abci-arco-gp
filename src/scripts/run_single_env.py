@@ -16,7 +16,7 @@ from src.environments.generic_environments import *
 from src.utils.baselines import Baseline
 
 MODELS = {'abci-categorical-gp', 'abci-dibs-gp', 'abci-arco-gp',
-          'anm', 'ges', 'daggnn', 'gadget', 'gae', 'golem', 'grandag', 'grasp', 'pc', 'beeps'}
+          'anm', 'ges', 'daggnn', 'gadget', 'gae', 'golem', 'grandag', 'grasp', 'pc', 'resit', 'beeps'}
 
 
 def spawn_model(model: str, env: Environment, num_workers: int, output_dir: str, run_id: str):
@@ -55,7 +55,8 @@ def get_free_port():
 
 
 def generate_run_id():
-    return ''.join([random.choice(string.ascii_letters + string.digits) for _ in range(6)])
+    random.seed(random.SystemRandom().random())
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=6))
 
 
 def run_worker(rank: int, env: Environment, master_port: str, num_workers: int, output_dir: str, run_id: str,
@@ -96,7 +97,7 @@ def run_single_env(env_file: str, output_dir: str, model: str, num_workers: int)
     print(f'--------- Running {model.upper()} on Environment {env.name}')
     print(f'--------- Job ID: {run_id}')
     print(f'--------- Starting time: {time.strftime("%d.%m.%Y %H:%M:%S")}')
-    print('-------------------------------------------------------------------------------------------\n')
+    print('-------------------------------------------------------------------------------------------\n', flush=True)
 
     if torch.cuda.is_available():
         print('GPUs are available:')
