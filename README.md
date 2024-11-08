@@ -28,7 +28,7 @@ conda env create -f conda_env.yaml
 
 Finally, activate the conda environment via 
 ```
-conda activate bci
+conda activate bci-arco-gp
 ```
 and set your python path to the project root
 ```
