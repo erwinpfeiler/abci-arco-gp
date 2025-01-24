@@ -527,7 +527,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     policy: str = 'static-obs-dataset'
     inference_mode: str = 'joint'  # 'joint' and 'no_gp_hps' available
     num_workers: int = 1
-    max_ps_size: int = 2
+    max_ps_size: int = 3
 
     # run config
     checkpoint_interval: int = 10

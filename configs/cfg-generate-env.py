@@ -63,12 +63,12 @@ class GaussianRootNodeConfig:
     mu_0: float = 0.
     kappa_0: float = 1.
     # generation setup
-    # alpha_0: float = 5.
-    # beta_0: float = 10.
+    alpha_0: float = 5.
+    beta_0: float = 10.
 
     # inference setup (normalised data)
-    alpha_0: float = 10.
-    beta_0: float = 10.
+    # alpha_0: float = 10.
+    # beta_0: float = 10.
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'mu_0': self.mu_0,
@@ -84,26 +84,47 @@ class GaussianRootNodeConfig:
         self.beta_0 = param_dict['beta_0']
 
 
+class AdditiveSigmoidsConfig:
+    # prior hyperparameters
+    noise_var_concentration: float = 50.
+    noise_var_rate: float = 50.
+    lscale_lower: float = 0.5
+    lscale_upper: float = 2.
+    offset_lower: float = -2.
+    offset_upper: float = 2.
+    outscale_concentration: float = 50.
+    outscale_rate: float = 10.
+
+    def param_dict(self) -> Dict[str, Any]:
+        params = {'noise_var_concentration': self.noise_var_concentration,
+                  'noise_var_rate': self.noise_var_rate,
+                  'lscale_lower': self.lscale_lower,
+                  'lscale_upper': self.lscale_upper,
+                  'offset_lower': self.offset_lower,
+                  'offset_upper': self.offset_upper,
+                  'outscale_rate': self.outscale_rate,
+                  'outscale_concentration': self.outscale_concentration, }
+        return params
+
+    def load_param_dict(self, param_dict):
+        self.noise_var_concentration = param_dict['noise_var_concentration']
+        self.noise_var_rate = param_dict['noise_var_rate']
+        self.lscale_lower = param_dict['lscale_lower']
+        self.lscale_upper = param_dict['lscale_upper']
+        self.offset_lower = param_dict['offset_lower']
+        self.offset_upper = param_dict['offset_upper']
+        self.outscale_rate = param_dict['outscale_rate']
+        self.outscale_concentration = param_dict['outscale_concentration']
+
+
 class GaussianProcessConfig:
     num_support_points: int = 50
     support_min: float = -10.
     support_max: float = 10.
 
     # generation setup
-    # noise_var_concentration: float = 50.
-    # noise_var_rate: float = 50.
-    # outscale_concentration: float = 100.
-    # outscale_rate: float = 10.
-    # lscale_concentration_multiplier: float = 30.
-    # lscale_rate: float = 30.
-    # scale_mix_concentration: float = 20.
-    # scale_mix_rate: float = 10.
-    # offset_loc: float = 0.
-    # offset_scale: float = 3.
-
-    # inference setup (normalised data)
-    noise_var_concentration: float = 2.
-    noise_var_rate: float = 8.
+    noise_var_concentration: float = 50.
+    noise_var_rate: float = 50.
     outscale_concentration: float = 100.
     outscale_rate: float = 10.
     lscale_concentration_multiplier: float = 30.
@@ -111,7 +132,19 @@ class GaussianProcessConfig:
     scale_mix_concentration: float = 20.
     scale_mix_rate: float = 10.
     offset_loc: float = 0.
-    offset_scale: float = 0.5
+    offset_scale: float = 3.
+
+    # inference setup (normalised data)
+    # noise_var_concentration: float = 2.
+    # noise_var_rate: float = 8.
+    # outscale_concentration: float = 100.
+    # outscale_rate: float = 10.
+    # lscale_concentration_multiplier: float = 30.
+    # lscale_rate: float = 30.
+    # scale_mix_concentration: float = 20.
+    # scale_mix_rate: float = 10.
+    # offset_loc: float = 0.
+    # offset_scale: float = 0.5
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'num_support_points': self.num_support_points,
@@ -144,9 +177,9 @@ class GaussianProcessConfig:
 class GPModelConfig:
     imll_mc_samples: int = 50  # number of ancestral mc samples to estimate an interventional mll
     opt_batch_size: int = 20  # maximum number of GP for which to update HP simulateniously to avoid out of mem
-    discard_threshold_gps: int = 70000  # max number of mechanisms to keep in model
-    discard_threshold_topo_orders: int = 30000  # max number of mechanisms to keep in model
-    linear: bool = True  # linear GP kernel
+    discard_threshold_gps: int = 25000  # max number of mechanisms to keep in model
+    discard_threshold_topo_orders: int = 10000  # max number of mechanisms to keep in model
+    linear: bool = False  # linear GP kernel
 
     # gp hyperparam training
     num_steps: int = 100
@@ -204,6 +237,69 @@ class ABCIBaseConfig:
 
     def __init__(self):
         self.check_policy(self.policy)
+
+
+class ABCIFixedGraphGPConfig(ABCIBaseConfig):
+    # general config
+    policy: str = 'static-obs-dataset'
+    num_workers: int = 1
+    inference_mode: str = 'joint'  # 'joint' and 'graph_marginal' available
+
+    # run config
+    checkpoint_interval: int = 10
+    output_dir: str = None
+    model_name: str = 'abci-fixed-graph-gp'
+    run_id: str = ''
+    num_experiments: int = 1
+    batch_size: int = 3
+    log_interval: int = 1
+    num_initial_obs_samples: int = 3
+
+    # eval parameters
+    compute_distributional_stats: bool = True
+    num_samples_per_graph = 10000
+
+    @classmethod
+    def check_policy(cls, policy: str):
+        assert policy in {'observational', 'random', 'random-fixed-value', 'static-obs-dataset',
+                          'static-intr-dataset'}, policy
+
+    def __init__(self, param_dict: Dict[str, Any] = None):
+        if param_dict is not None:
+            self.load_param_dict(param_dict)
+        super().__init__()
+        assert self.inference_mode in {'joint', 'graph_marginal'}
+
+    def param_dict(self) -> Dict[str, Any]:
+        params = {'policy': self.policy,
+                  'num_workers': self.num_workers,
+                  'inference_mode': self.inference_mode,
+                  'checkpoint_interval': self.checkpoint_interval,
+                  'output_dir': self.output_dir,
+                  'model_name': self.model_name,
+                  'run_id': self.run_id,
+                  'num_experiments': self.num_experiments,
+                  'batch_size': self.batch_size,
+                  'log_interval': self.log_interval,
+                  'num_initial_obs_samples': self.num_initial_obs_samples,
+                  'compute_distributional_stats': self.compute_distributional_stats,
+                  'num_samples_per_graph': self.num_samples_per_graph}
+        return params
+
+    def load_param_dict(self, param_dict):
+        self.policy = param_dict['policy']
+        self.num_workers = param_dict['num_workers']
+        self.inference_mode = param_dict['inference_mode']
+        self.checkpoint_interval = param_dict['checkpoint_interval']
+        self.output_dir = param_dict['output_dir']
+        self.model_name = param_dict['model_name']
+        self.run_id = param_dict['run_id']
+        self.num_experiments = param_dict['num_experiments']
+        self.batch_size = param_dict['batch_size']
+        self.log_interval = param_dict['log_interval']
+        self.num_initial_obs_samples = param_dict['num_initial_obs_samples']
+        self.compute_distributional_stats = param_dict['compute_distributional_stats']
+        self.num_samples_per_graph = param_dict['num_samples_per_graph']
 
 
 class ABCICategoricalGPConfig(ABCIBaseConfig):
@@ -309,6 +405,10 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
     log_interval: int = 1
     num_initial_obs_samples: int = 200
 
+    # eval parameters
+    compute_distributional_stats: bool = True
+    num_samples_per_graph = 10
+
     # training parameters
     resampling_frac: float = 0.25  # fraction of particles to keep when resampling
     resampling_threshold: float = 1e-2
@@ -360,6 +460,8 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
                   'batch_size': self.batch_size,
                   'log_interval': self.log_interval,
                   'num_initial_obs_samples': self.num_initial_obs_samples,
+                  'compute_distributional_stats': self.compute_distributional_stats,
+                  'num_samples_per_graph': self.num_samples_per_graph,
                   'resampling_frac': self.resampling_frac,
                   'resampling_threshold': self.resampling_threshold,
                   'num_svgd_steps': self.num_svgd_steps,
@@ -400,6 +502,8 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
         self.batch_size = param_dict['batch_size']
         self.log_interval = param_dict['log_interval']
         self.num_initial_obs_samples = param_dict['num_initial_obs_samples']
+        self.compute_distributional_stats = param_dict['compute_distributional_stats']
+        self.num_samples_per_graph = param_dict['num_samples_per_graph']
         self.resampling_frac = param_dict['resampling_frac']
         self.resampling_threshold = param_dict['resampling_threshold']
         self.num_svgd_steps = param_dict['num_svgd_steps']
@@ -437,7 +541,9 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
 
     # eval parameters
     num_mc_cos: int = 100
-    num_mc_graphs: int = 25
+    num_mc_graphs: int = 10
+    compute_distributional_stats: bool = True
+    num_samples_per_graph = 10
 
     # training parameters
     tau: float = 0.1  # score func estimator baseline decay factor
@@ -479,6 +585,8 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
                   # eval parameters
                   'num_mc_cos': self.num_mc_cos,
                   'num_mc_graphs': self.num_mc_graphs,
+                  'compute_distributional_stats': self.compute_distributional_stats,
+                  'num_samples_per_graph': self.num_samples_per_graph,
                   # training parameters
                   'tau': self.tau,
                   'es_threshold': self.es_threshold,
@@ -511,6 +619,8 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
         # eval parameters
         self.num_mc_cos = param_dict['num_mc_cos']
         self.num_mc_graphs = param_dict['num_mc_graphs']
+        self.compute_distributional_stats = param_dict['compute_distributional_stats']
+        self.num_samples_per_graph = param_dict['num_samples_per_graph']
 
         # training parameters
         self.tau = param_dict['tau']
@@ -530,7 +640,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
 ##############################################################################################
 class EnvironmentConfig:
     id_length: int = 8
-    intervention_bounds: Tuple[float, float] = (-7., 7.)
+    intervention_bounds: Tuple[float, float] = (-3., 3.)
     mechanism_model: str = 'gp-model'
     linear: bool = False
     normalise_data: bool = True
@@ -538,7 +648,7 @@ class EnvironmentConfig:
     non_intervenable_nodes: set = None
 
     generate_static_obs_dataset: bool = True
-    num_observational_train_samples: int = 100
+    num_observational_train_samples: int = 200
     num_observational_test_samples: int = 200
 
     generate_static_intr_dataset: bool = False
