@@ -239,6 +239,69 @@ class ABCIBaseConfig:
         self.check_policy(self.policy)
 
 
+class ABCIFixedGraphGPConfig(ABCIBaseConfig):
+    # general config
+    policy: str = 'static-obs-dataset'
+    num_workers: int = 1
+    inference_mode: str = 'joint'  # 'joint' and 'graph_marginal' available
+
+    # run config
+    checkpoint_interval: int = 10
+    output_dir: str = None
+    model_name: str = 'abci-fixed-graph-gp'
+    run_id: str = ''
+    num_experiments: int = 1
+    batch_size: int = 3
+    log_interval: int = 1
+    num_initial_obs_samples: int = 3
+
+    # eval parameters
+    compute_distributional_stats: bool = True
+    num_samples_per_graph = 10000
+
+    @classmethod
+    def check_policy(cls, policy: str):
+        assert policy in {'observational', 'random', 'random-fixed-value', 'static-obs-dataset',
+                          'static-intr-dataset'}, policy
+
+    def __init__(self, param_dict: Dict[str, Any] = None):
+        if param_dict is not None:
+            self.load_param_dict(param_dict)
+        super().__init__()
+        assert self.inference_mode in {'joint', 'graph_marginal'}
+
+    def param_dict(self) -> Dict[str, Any]:
+        params = {'policy': self.policy,
+                  'num_workers': self.num_workers,
+                  'inference_mode': self.inference_mode,
+                  'checkpoint_interval': self.checkpoint_interval,
+                  'output_dir': self.output_dir,
+                  'model_name': self.model_name,
+                  'run_id': self.run_id,
+                  'num_experiments': self.num_experiments,
+                  'batch_size': self.batch_size,
+                  'log_interval': self.log_interval,
+                  'num_initial_obs_samples': self.num_initial_obs_samples,
+                  'compute_distributional_stats': self.compute_distributional_stats,
+                  'num_samples_per_graph': self.num_samples_per_graph}
+        return params
+
+    def load_param_dict(self, param_dict):
+        self.policy = param_dict['policy']
+        self.num_workers = param_dict['num_workers']
+        self.inference_mode = param_dict['inference_mode']
+        self.checkpoint_interval = param_dict['checkpoint_interval']
+        self.output_dir = param_dict['output_dir']
+        self.model_name = param_dict['model_name']
+        self.run_id = param_dict['run_id']
+        self.num_experiments = param_dict['num_experiments']
+        self.batch_size = param_dict['batch_size']
+        self.log_interval = param_dict['log_interval']
+        self.num_initial_obs_samples = param_dict['num_initial_obs_samples']
+        self.compute_distributional_stats = param_dict['compute_distributional_stats']
+        self.num_samples_per_graph = param_dict['num_samples_per_graph']
+
+
 class ABCICategoricalGPConfig(ABCIBaseConfig):
     # general config
     policy: str = 'observational'
@@ -563,7 +626,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
 ##############################################################################################
 class EnvironmentConfig:
     id_length: int = 8
-    intervention_bounds: Tuple[float, float] = (-3., 3.)
+    intervention_bounds: Tuple[float, float] = (-1., 1.)
     mechanism_model: str = 'gp-model'
     linear: bool = False
     normalise_data: bool = True
