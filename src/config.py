@@ -405,6 +405,10 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
     log_interval: int = 1
     num_initial_obs_samples: int = 200
 
+    # eval parameters
+    compute_distributional_stats: bool = True
+    num_samples_per_graph = 10
+
     # training parameters
     resampling_frac: float = 0.25  # fraction of particles to keep when resampling
     resampling_threshold: float = 1e-2
@@ -456,6 +460,8 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
                   'batch_size': self.batch_size,
                   'log_interval': self.log_interval,
                   'num_initial_obs_samples': self.num_initial_obs_samples,
+                  'compute_distributional_stats': self.compute_distributional_stats,
+                  'num_samples_per_graph': self.num_samples_per_graph,
                   'resampling_frac': self.resampling_frac,
                   'resampling_threshold': self.resampling_threshold,
                   'num_svgd_steps': self.num_svgd_steps,
@@ -496,6 +502,8 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
         self.batch_size = param_dict['batch_size']
         self.log_interval = param_dict['log_interval']
         self.num_initial_obs_samples = param_dict['num_initial_obs_samples']
+        self.compute_distributional_stats = param_dict['compute_distributional_stats']
+        self.num_samples_per_graph = param_dict['num_samples_per_graph']
         self.resampling_frac = param_dict['resampling_frac']
         self.resampling_threshold = param_dict['resampling_threshold']
         self.num_svgd_steps = param_dict['num_svgd_steps']
@@ -533,7 +541,9 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
 
     # eval parameters
     num_mc_cos: int = 100
-    num_mc_graphs: int = 25
+    num_mc_graphs: int = 10
+    compute_distributional_stats: bool = True
+    num_samples_per_graph = 10
 
     # training parameters
     tau: float = 0.1  # score func estimator baseline decay factor
@@ -575,6 +585,8 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
                   # eval parameters
                   'num_mc_cos': self.num_mc_cos,
                   'num_mc_graphs': self.num_mc_graphs,
+                  'compute_distributional_stats': self.compute_distributional_stats,
+                  'num_samples_per_graph': self.num_samples_per_graph,
                   # training parameters
                   'tau': self.tau,
                   'es_threshold': self.es_threshold,
@@ -607,6 +619,8 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
         # eval parameters
         self.num_mc_cos = param_dict['num_mc_cos']
         self.num_mc_graphs = param_dict['num_mc_graphs']
+        self.compute_distributional_stats = param_dict['compute_distributional_stats']
+        self.num_samples_per_graph = param_dict['num_samples_per_graph']
 
         # training parameters
         self.tau = param_dict['tau']
