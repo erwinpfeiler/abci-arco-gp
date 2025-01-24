@@ -59,7 +59,8 @@ def main():
     os.system(f'export PYTHONPATH="{working_dir}"')
 
     for i, env_file in enumerate(env_files * NUM_RUNS_PER_ENV):
-        os.system(f'python {script} {env_file} {MODEL} {output_dir} >> {os.path.join(logs_dir, MODEL + ".out")}')
+        logfile = os.path.join(logs_dir, MODEL + f'-{i}.out')
+        os.system(f'python {script} {env_file} {MODEL} {output_dir} >> {logfile}')
 
 
 # parse arguments when run from shell
