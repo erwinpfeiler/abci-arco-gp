@@ -11,12 +11,15 @@ import torch.multiprocessing as mp
 from src.abci_arco_gp import ABCIArCOGP
 from src.abci_categorical_gp import ABCICategoricalGP
 from src.abci_dibs_gp import ABCIDiBSGP
-from src.config import ABCICategoricalGPConfig, ABCIDiBSGPConfig, ABCIArCOGPConfig
+from src.abci_fixed_graph_gp import ABCIFixedGraphGP
+from src.config import ABCICategoricalGPConfig, ABCIDiBSGPConfig, ABCIArCOGPConfig, ABCIFixedGraphGPConfig
 from src.environments.generic_environments import *
 from src.utils.baselines import Baseline
+from src.utils.graphs import adj_mat_to_graph, get_graph_key
 
 MODELS = {'abci-categorical-gp', 'abci-dibs-gp', 'abci-arco-gp',
-          'anm', 'ges', 'daggnn', 'gadget', 'gae', 'golem', 'grandag', 'grasp', 'pc', 'resit', 'beeps'}
+          'anm', 'ges', 'daggnn', 'gadget', 'gae', 'golem', 'grandag', 'grasp', 'pc', 'resit', 'beeps',
+          'abci-resit-gp', 'abci-true-graph-gp'}
 
 
 def spawn_model(model: str, env: Environment, num_workers: int, output_dir: str, run_id: str):
@@ -40,6 +43,34 @@ def spawn_model(model: str, env: Environment, num_workers: int, output_dir: str,
         cfg.output_dir = output_dir
         cfg.run_id = run_id
         return ABCIArCOGP(env, cfg)
+
+    elif model == 'abci-resit-gp':
+        cfg = ABCIFixedGraphGPConfig()
+        cfg.num_workers = num_workers
+        cfg.output_dir = output_dir
+        cfg.run_id = run_id
+        cfg.model_name = model
+
+        print(f'Running RESIT to find graph for ABCI-RESIT-GP...')
+        resit = Baseline(env, 'resit', policy=cfg.policy)
+        resit.run(compute_stats=False)
+        graph = adj_mat_to_graph(resit.graphs.squeeze(), env.node_labels)
+        print(f'RESIT graph is {get_graph_key(graph)}')
+
+        abci = ABCIFixedGraphGP(env, cfg)
+        abci.set_graph(graph)
+        return abci
+
+    elif model == 'abci-true-graph-gp':
+        cfg = ABCIFixedGraphGPConfig()
+        cfg.num_workers = num_workers
+        cfg.output_dir = output_dir
+        cfg.run_id = run_id
+        cfg.model_name = model
+
+        abci = ABCIFixedGraphGP(env, cfg)
+        abci.set_graph(env.graph)
+        return abci
 
     else:
         if num_workers != 1:
@@ -86,6 +117,7 @@ def run_worker(rank: int, env: Environment, master_port: str, num_workers: int, 
 
 
 def run_single_env(env_file: str, output_dir: str, model: str, num_workers: int):
+    torch.set_default_dtype(torch.float32)
     # load env
     env = Environment.load(env_file)
 

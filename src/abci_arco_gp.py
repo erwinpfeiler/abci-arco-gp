@@ -12,7 +12,7 @@ from src.mechanism_models.mechanisms import get_mechanism_key
 from src.mechanism_models.shared_data_gp_model import SharedDataGaussianProcessModel
 from src.utils.causal_orders import CausalOrder, generate_all_mechanisms, generate_all_parent_sets
 from src.utils.graphs import dag_to_cpdag, adj_mat_to_graph
-from src.utils.metrics import aid, compute_structure_metrics
+from src.utils.metrics import aid, compute_structure_metrics, mmd
 from src.utils.utils import inf_tensor
 
 
@@ -381,25 +381,32 @@ class ABCIArCOGP(ABCIBase):
         aces = self.graph_posterior_expectation_mc(ace_wrapper, mc_cos, mc_adj_mats)
         return aces
 
-    def sample(self, interventions: dict, num_samples: int, adj_mats: torch.Tensor):
+    def sample(self, interventions: dict, num_samples_per_graph: int, adj_mats: torch.Tensor = None):
+        if adj_mats is None:
+            mc_cos, mc_adj_masks = self.sample_mc_cos(set_data=True, num_cos=self.cfg.num_mc_cos)
+            adj_mats = self.sample_mc_graphs(mc_cos, mc_adj_masks, num_mc_graphs=self.cfg.num_mc_graphs)
+
         num_cos, num_graphs = adj_mats.shape[0:2]
-        samples = {node: torch.zeros(num_cos, num_graphs, num_samples) for node in self.mechanism_model.node_labels}
+        samples = {node: torch.zeros(num_cos, num_graphs, num_samples_per_graph) for node in
+                   self.mechanism_model.node_labels}
 
-        for cidx in range(num_cos):
-            for gidx in range(num_graphs):
-                graph = adj_mat_to_graph(adj_mats[cidx, gidx], self.mechanism_model.node_labels)
-                self.mechanism_model.init_topological_order(graph, self.sample_time)
-                exp = self.mechanism_model.sample(interventions, num_samples, 1, graph)
-                for node in samples:
-                    samples[node][cidx, gidx] = exp.data[node].squeeze()
+        with torch.no_grad():
+            for cidx in range(num_cos):
+                for gidx in range(num_graphs):
+                    graph = adj_mat_to_graph(adj_mats[cidx, gidx], self.mechanism_model.node_labels)
+                    self.mechanism_model.init_topological_order(graph, self.sample_time)
+                    exp = self.mechanism_model.sample(interventions, 1, num_samples_per_graph, graph)
+                    for node in samples:
+                        samples[node][cidx, gidx] = exp.data[node].squeeze()
 
-        for node in samples:
-            samples[node] = samples[node].view(num_cos, -1)
+            for node in samples:
+                samples[node] = samples[node].reshape(-1)
 
-        # compute sample weights
-        log_co_weights = self.co_weights.sum(dim=1)
-        log_co_weights -= log_co_weights.logsumexp(dim=0)
-        weights = log_co_weights.exp() / (num_graphs * num_samples)
+            # compute sample weights
+            log_co_weights = self.co_weights.sum(dim=1)
+            log_co_weights -= log_co_weights.logsumexp(dim=0)
+            weights = log_co_weights.exp() / (num_graphs * num_samples_per_graph)
+            weights = weights.unsqueeze(1).expand(-1, num_graphs * num_samples_per_graph).reshape(-1)
         return samples, weights
 
     def sample_ace(self, target: str, interventions: dict, num_samples: int, adj_mats: torch.Tensor):
@@ -494,6 +501,37 @@ class ABCIArCOGP(ABCIBase):
 
         order_aid = self.co_posterior_expectation(aid_wrapper_co, mc_cos)
         self.record_stat('order_aid', order_aid)
+
+        if self.cfg.compute_distributional_stats:
+            if self.env.interventional_test_data is not None:
+                print(f'Computing distributional metrics on interventional test data...')
+                mean_errors = []
+                mmds = []
+                with torch.no_grad():
+                    for eidx, exp in enumerate(self.env.interventional_test_data):
+                        print(f'Computing metrics for intervention {eidx}/{len(self.env.interventional_test_data)}')
+                        env_samples = torch.stack([exp.data[node].squeeze() for node in self.env.node_labels], dim=-1)
+                        env_mean = env_samples.mean(dim=0)
+
+                        # sample from learned posterior distribution
+                        samples, weights = self.sample(exp.interventions, self.cfg.num_samples_per_graph, mc_adj_mats)
+                        samples = torch.stack([samples[node].squeeze() for node in self.env.node_labels], dim=-1)
+                        posterior_mean = weights @ samples
+
+                        mean_errors.append(posterior_mean - env_mean)
+                        mmds.append(mmd(samples, env_samples, weights, bandwidth=0.2))
+
+                mmds = torch.stack(mmds, dim=0)
+                self.record_stat('mmd', mmds.mean())
+                print(f'Average MMD is {mmds.mean()}')
+
+                mean_errors = torch.stack(mean_errors, dim=0)
+                dmae = mean_errors.abs().sum(dim=-1).mean()
+                dmse = mean_errors.pow(2).sum(dim=-1).sqrt().mean()
+                self.record_stat('dmae', dmae)
+                self.record_stat('dmse', dmse)
+                print(f'Average distribution mean L1 distance is {dmae}')
+                print(f'Average distribution mean L2 distance is {dmse}')
 
     def param_dict(self) -> Dict[str, Any]:
         params = super().param_dict()

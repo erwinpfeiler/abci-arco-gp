@@ -14,7 +14,7 @@ from src.graph_models.dibs_model import DiBSModel
 from src.mechanism_models.gp_model import get_unique_mechanisms
 from src.mechanism_models.shared_data_gp_model import SharedDataGaussianProcessModel
 from src.utils.graphs import dag_to_cpdag
-from src.utils.metrics import compute_structure_metrics, aid
+from src.utils.metrics import compute_structure_metrics, aid, mmd
 from src.utils.utils import inf_tensor
 
 
@@ -324,6 +324,33 @@ class ABCIDiBSGP(ABCIBase):
             return log_graph_weights, log_particle_weights
         return log_graph_weights.exp(), log_particle_weights.exp()
 
+    def sample(self, interventions: dict, num_samples_per_graph: int, mc_graphs: List[List[nx.DiGraph]] = None,
+               mc_adj_mats: torch.Tensor = None):
+
+        if mc_graphs is None or mc_adj_mats is None:
+            mc_graphs, mc_adj_mats = self.sample_mc_graphs(set_data=True)
+
+        num_particles, num_graphs = mc_adj_mats.shape[0:2]
+        samples = {node: torch.zeros(num_particles, num_graphs, num_samples_per_graph) for node in
+                   self.mechanism_model.node_labels}
+
+        with torch.no_grad():
+            for pidx in range(num_particles):
+                for gidx, graph in enumerate(mc_graphs[pidx]):
+                    if nx.is_directed_acyclic_graph(graph):
+                        exp = self.mechanism_model.sample(interventions, 1, num_samples_per_graph, graph)
+                        for node in samples:
+                            samples[node][pidx, gidx] = exp.data[node].squeeze()
+
+            for node in samples:
+                samples[node] = samples[node].reshape(-1)
+
+            # compute sample weights
+            graph_weights, particle_weights = self.compute_mc_weights(mc_graphs, mc_adj_mats)
+            weights = graph_weights * particle_weights.unsqueeze(1)
+            weights = weights.unsqueeze(-1).expand(-1, -1, num_samples_per_graph).reshape(-1) / num_samples_per_graph
+        return samples, weights
+
     def estimate_ace(self, target: str, interventions: dict, num_samples: int, mc_graphs: List[List[nx.DiGraph]] = None,
                      mc_adj_mats: torch.Tensor = None) -> torch.Tensor:
 
@@ -432,6 +459,39 @@ class ABCIDiBSGP(ABCIBase):
                 oset_aid = self.graph_posterior_expectation(lambda g: aid_wrapper_cpdag(g, mode='oset'), mc_graphs,
                                                             mc_adj_mats)
                 self.record_stat('oset_aid_cpdag', oset_aid)
+
+        if self.cfg.compute_distributional_stats:
+            if self.env.interventional_test_data is not None:
+                print(f'Computing distributional metrics on interventional test data...')
+                mean_errors = []
+                mmds = []
+                with torch.no_grad():
+                    for eidx, exp in enumerate(self.env.interventional_test_data):
+                        print(f'Computing metrics for intervention {eidx}/{len(self.env.interventional_test_data)}')
+                        env_samples = torch.stack([exp.data[node].squeeze() for node in self.env.node_labels],
+                                                  dim=-1)
+                        env_mean = env_samples.mean(dim=0)
+
+                        # sample from learned posterior distribution
+                        samples, weights = self.sample(exp.interventions, self.cfg.num_samples_per_graph, mc_graphs,
+                                                       mc_adj_mats)
+                        samples = torch.stack([samples[node].squeeze() for node in self.env.node_labels], dim=-1)
+                        posterior_mean = weights @ samples
+
+                        mean_errors.append(posterior_mean - env_mean)
+                        mmds.append(mmd(samples, env_samples, weights, bandwidth=0.2))
+
+                mmds = torch.stack(mmds, dim=0)
+                self.record_stat('mmd', mmds.mean())
+                print(f'Average MMD is {mmds.mean()}')
+
+                mean_errors = torch.stack(mean_errors, dim=0)
+                dmae = mean_errors.abs().sum(dim=-1).mean()
+                dmse = mean_errors.pow(2).sum(dim=-1).sqrt().mean()
+                self.record_stat('dmae', dmae)
+                self.record_stat('dmse', dmse)
+                print(f'Average distribution mean L1 distance is {dmae}')
+                print(f'Average distribution mean L2 distance is {dmse}')
 
     def param_dict(self) -> Dict[str, Any]:
         params = super().param_dict()

@@ -7,14 +7,18 @@ import pandas as pd
 from src.abci_arco_gp import ABCIArCOGP
 from src.abci_categorical_gp import ABCICategoricalGP
 from src.abci_dibs_gp import ABCIDiBSGP
+from src.abci_fixed_graph_gp import ABCIFixedGraphGP
 from src.environments.generic_environments import *
+from src.utils.metrics import mmd
 from src.utils.utils import export_stats
 
 MODELS = {'abci-categorical-gp': ABCICategoricalGP,
           'abci-dibs-gp': ABCIDiBSGP,
-          'abci-arco-gp': ABCIArCOGP}
+          'abci-arco-gp': ABCIArCOGP,
+          'abci-resit-gp': ABCIFixedGraphGP,
+          'abci-true-graph-gp': ABCIFixedGraphGP}
 
-EVAL_SCRIPTS = {'aces-eval', 'co-eval', 'structure-stats'}
+EVAL_SCRIPTS = {'aces-eval', 'mmd-eval', 'co-eval', 'structure-stats'}
 
 
 def aces_eval(abci, output_dir: str):
@@ -36,6 +40,52 @@ def aces_eval(abci, output_dir: str):
                            f'stats-{abci.cfg.model_name}-{abci.cfg.policy}-{abci.env.name}'
                            f'-{abci.cfg.run_id}-mae.csv')
     df.to_csv(outpath, index=False)
+
+
+def mmd_eval(abci, output_dir: str):
+    num_env_samples = 10000
+    num_nodes = len(abci.env.node_labels)
+
+    # set mc params s.t. we have 10000 samples
+    num_samples_per_graph = 10000
+    if isinstance(abci, ABCIArCOGP):
+        abci.cfg.num_mc_cos = 100
+        abci.cfg.num_mc_graphs = 10
+        num_samples_per_graph = 10
+    elif isinstance(abci, ABCIDiBSGP):
+        abci.cfg.num_mc_graphs = 100
+        num_samples_per_graph = 10
+
+    mmds = torch.zeros(num_nodes)
+    maes = torch.zeros(num_nodes)
+    mses = torch.zeros(num_nodes)
+    # compute MMDs between the true vs. inferred interventional distribution for single-node interventions
+    for nidx, node in enumerate(abci.env.node_labels):
+        print(f'Computing metrics for p(X | {node} = 1)')
+        interventions = {node: torch.tensor(1.)}
+        env_samples = abci.env.sample(interventions, num_env_samples, 1).data
+        env_samples = torch.stack([env_samples[node].squeeze() for node in abci.env.node_labels], dim=-1)
+
+        samples, weights = abci.sample(interventions, num_samples_per_graph)
+        samples = torch.stack([samples[node].squeeze() for node in abci.env.node_labels], dim=-1)
+        mmds[nidx] = mmd(samples, env_samples, weights, unbiased=True)
+        print(f'MMD is {mmds[nidx].item()}')
+
+        env_mean = env_samples.mean(dim=0)
+        pred_mean = weights @ samples
+        mean_error = pred_mean - env_mean
+        maes[nidx] = mean_error.abs().sum()
+        mses[nidx] = mean_error.pow(2).sum().sqrt()
+        print(f'Expected absolute error norm of the distribution mean is {maes[nidx].item()}')
+        print(f'Expected squared error norm of the distribution mean is {mses[nidx].item()}')
+
+    for metric, values in zip(['mmd', 'dmae', 'dmse'], [mmds, maes, mses]):
+        df = pd.DataFrame(values.view(1, -1))
+        df.columns = [f'do({node})' for node in abci.env.node_labels]
+        outpath = os.path.join(output_dir,
+                               f'stats-{abci.cfg.model_name}-{abci.cfg.policy}-{abci.env.name}'
+                               f'-{abci.cfg.run_id}-{metric}.csv')
+        df.to_csv(outpath, index=False)
 
 
 def co_eval(abci, output_dir: str):
@@ -98,10 +148,12 @@ def run_evaluation(abci_file: str, output_dir: str, abci_model: str, eval_type: 
     assert abci_model in MODELS, print(f'Invalid ABCI model {abci_model}!')
     print(f'Loading model ...', end='')
     abci = MODELS[abci_model].load(abci_file)
-    print(' complete!')
+    print(' complete!', flush=True)
 
     if eval_type == 'aces-eval':
         aces_eval(abci, output_dir)
+    elif eval_type == 'mmd-eval':
+        mmd_eval(abci, output_dir)
     elif eval_type == 'co-eval':
         co_eval(abci, output_dir)
     elif eval_type == 'structure-stats':

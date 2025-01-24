@@ -3,7 +3,6 @@ from typing import Union, Callable, List, Tuple
 
 import gpytorch
 import numpy as np
-import pandas as pd
 import sumu
 import torch
 from castle.algorithms import GES, DAG_GNN, GOLEM, GraNDAG, ANMNonlinear, PC, GAE
@@ -113,8 +112,10 @@ class Baseline:
         self.output_dir = output_dir
         self.run_id = run_id
         self.policy = policy
+        self.graphs = None
+        self.stats = None
 
-    def run(self):
+    def run(self, compute_stats: bool = True):
         # load data
         if self.policy == 'static-obs-dataset':
             # data shape will be (num_samples, num_nodes)
@@ -127,38 +128,38 @@ class Baseline:
         if self.method == 'anm':
             model = ANMNonlinear()
             model.learn(data)
-            graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
+            self.graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
         elif self.method == 'ges':
             model = GES()
             model.learn(data)
-            graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
+            self.graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
             cpdag_prediction = True
         elif self.method == 'daggnn':
             model = DAG_GNN()  # graph_threshold=0.5 for linear networks
             model.learn(data)
-            graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
+            self.graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
         elif self.method in {'gadget', 'beeps'}:
             model = Gadget(data)
-            graphs = model.sample()
+            self.graphs = model.sample()
         elif self.method == 'gae':
             model = GAE()
             model.learn(data)
-            graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
+            self.graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
         elif self.method == 'golem':
             model = GOLEM()
             model.learn(data)
-            graphs = torch.tensor(model.causal_matrix).float().unsqueeze(0)
+            self.graphs = torch.tensor(model.causal_matrix).float().unsqueeze(0)
         elif self.method == 'grandag':
             model = GraNDAG(input_dim=data.shape[1])
             model.learn(data)
-            graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
+            self.graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
         elif self.method == 'grasp':
-            graphs = causal_graph_to_cpdag(grasp(data)).unsqueeze(0)
+            self.graphs = causal_graph_to_cpdag(grasp(data)).unsqueeze(0)
             cpdag_prediction = True
         elif self.method == 'pc':
             model = PC(variant='stable')
             model.learn(data)
-            graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
+            self.graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
             cpdag_prediction = True
         elif self.method == 'resit':
             if self.env.cfg.linear:
@@ -166,111 +167,114 @@ class Baseline:
             torch.set_default_dtype(torch.float32)
             model = RESIT(regressor=GPRegressor(linear=self.env.cfg.linear))
             model.fit(data)
-            graphs = torch.tensor(model.adjacency_matrix_).unsqueeze(0)
+            self.graphs = torch.tensor(model.adjacency_matrix_).unsqueeze(0)
         else:
             raise NotImplementedError
 
-        print('Computing structure stats...')
-        num_graphs = graphs.shape[0]
-        true_adj_mat = self.env.get_adj_mat()
-        true_cpdag = self.env.get_cpdag()
-        if cpdag_prediction:
-            assert num_graphs == 1, print('Handling multiple CPDAG predictions not implemented yet.')
-            cpdag = graphs[0]
+        # computing stats
+        if compute_stats:
+            print('Computing structure stats...')
+            num_graphs = self.graphs.shape[0]
+            true_adj_mat = self.env.get_adj_mat()
+            true_cpdag = self.env.get_cpdag()
+            if cpdag_prediction:
+                assert num_graphs == 1, print('Handling multiple CPDAG predictions not implemented yet.')
+                cpdag = self.graphs[0]
 
-            # compute expected number of edges
-            tmp = cpdag.triu() + cpdag.tril().T
-            enum_edges = torch.where(tmp.int() == 2, torch.tensor(1), tmp).sum()
-            stats = {'enum_edges': [enum_edges]}
+                # compute expected number of edges
+                tmp = cpdag.triu() + cpdag.tril().T
+                enum_edges = torch.where(tmp.int() == 2, torch.tensor(1), tmp).sum()
+                self.stats = {'enum_edges': [enum_edges]}
 
-            # compute structure metrics
-            for stat_name, value in compute_structure_metrics(true_adj_mat, cpdag).items():
-                stats[stat_name] = [value]
+                # compute structure metrics
+                for stat_name, value in compute_structure_metrics(true_adj_mat, cpdag).items():
+                    self.stats[stat_name] = [value]
 
-            for stat_name, value in compute_structure_metrics(true_cpdag, cpdag).items():
-                stats[stat_name + '_cpdag'] = [value]
+                for stat_name, value in compute_structure_metrics(true_cpdag, cpdag).items():
+                    self.stats[stat_name + '_cpdag'] = [value]
 
-            # compute aid variants
-            try:
-                stats['aaid'] = [aid(true_adj_mat, cpdag, mode='ancestor')]
-                stats['paid'] = [aid(true_adj_mat, cpdag, mode='parent')]
-                stats['oset_aid'] = [aid(true_adj_mat, cpdag, mode='oset')]
+                # compute aid variants
+                try:
+                    self.stats['aaid'] = [aid(true_adj_mat, cpdag, mode='ancestor')]
+                    self.stats['paid'] = [aid(true_adj_mat, cpdag, mode='parent')]
+                    self.stats['oset_aid'] = [aid(true_adj_mat, cpdag, mode='oset')]
 
-                stats['aaid_cpdag'] = [aid(true_cpdag, cpdag, mode='ancestor')]
-                stats['paid_cpdag'] = [aid(true_cpdag, cpdag, mode='parent')]
-                stats['oset_aid_cpdag'] = [aid(true_cpdag, cpdag, mode='oset')]
-            except Exception as e:
-                # the PC alg may yield potentially cyclic CPDAGs for which the AID is not computable
-                print(e)
-                print()
-                print('Not recording AID stats...')
-                stats['aaid'] = [torch.tensor(-1.)]
-                stats['paid'] = [torch.tensor(-1.)]
-                stats['oset_aid'] = [torch.tensor(-1.)]
+                    self.stats['aaid_cpdag'] = [aid(true_cpdag, cpdag, mode='ancestor')]
+                    self.stats['paid_cpdag'] = [aid(true_cpdag, cpdag, mode='parent')]
+                    self.stats['oset_aid_cpdag'] = [aid(true_cpdag, cpdag, mode='oset')]
+                except Exception as e:
+                    # the PC alg may yield potentially cyclic CPDAGs for which the AID is not computable
+                    print(e)
+                    print()
+                    print('Not recording AID stats...')
+                    self.stats['aaid'] = [torch.tensor(-1.)]
+                    self.stats['paid'] = [torch.tensor(-1.)]
+                    self.stats['oset_aid'] = [torch.tensor(-1.)]
 
-                stats['aaid_cpdag'] = [torch.tensor(-1.)]
-                stats['paid_cpdag'] = [torch.tensor(-1.)]
-                stats['oset_aid_cpdag'] = [torch.tensor(-1.)]
+                    self.stats['aaid_cpdag'] = [torch.tensor(-1.)]
+                    self.stats['paid_cpdag'] = [torch.tensor(-1.)]
+                    self.stats['oset_aid_cpdag'] = [torch.tensor(-1.)]
 
-            # order aid n/a
-            stats['order_aid'] = [torch.tensor(-1.)]
-        else:
-            edge_probs = graphs.mean(dim=0)
-            stats = {'enum_edges': [edge_probs.sum()]}
+                # order aid n/a
+                self.stats['order_aid'] = [torch.tensor(-1.)]
+            else:
+                edge_probs = self.graphs.mean(dim=0)
+                self.stats = {'enum_edges': [edge_probs.sum()]}
 
-            # compute structure metrics
-            for stat_name, value in compute_structure_metrics(true_adj_mat, edge_probs).items():
-                stats[stat_name] = [value]
+                # compute structure metrics
+                for stat_name, value in compute_structure_metrics(true_adj_mat, edge_probs).items():
+                    self.stats[stat_name] = [value]
 
-            for stat_name, value in compute_structure_metrics(true_cpdag, edge_probs, dag_to_cpdag=True).items():
-                stats[stat_name + '_cpdag'] = [value]
+                for stat_name, value in compute_structure_metrics(true_cpdag, edge_probs, dag_to_cpdag=True).items():
+                    self.stats[stat_name + '_cpdag'] = [value]
 
-            # compute aid variants
-            stats['aaid'] = [graph_expectation(graphs, lambda g: aid(true_adj_mat, g, mode='ancestor'))]
-            stats['paid'] = [graph_expectation(graphs, lambda g: aid(true_adj_mat, g, mode='parent'))]
-            stats['oset_aid'] = [graph_expectation(graphs, lambda g: aid(true_adj_mat, g, mode='oset'))]
+                # compute aid variants
+                self.stats['aaid'] = [graph_expectation(self.graphs, lambda g: aid(true_adj_mat, g, mode='ancestor'))]
+                self.stats['paid'] = [graph_expectation(self.graphs, lambda g: aid(true_adj_mat, g, mode='parent'))]
+                self.stats['oset_aid'] = [graph_expectation(self.graphs, lambda g: aid(true_adj_mat, g, mode='oset'))]
 
-            def aid_wrapper(g, mode: str):
-                return aid(true_cpdag, dag_to_cpdag(g, self.env.node_labels), mode=mode)
+                def aid_wrapper(g, mode: str):
+                    return aid(true_cpdag, dag_to_cpdag(g, self.env.node_labels), mode=mode)
 
-            stats['aaid_cpdag'] = [graph_expectation(graphs, lambda g: aid_wrapper(g, mode='ancestor'))]
-            stats['paid_cpdag'] = [graph_expectation(graphs, lambda g: aid_wrapper(g, mode='parent'))]
-            stats['oset_aid_cpdag'] = [graph_expectation(graphs, lambda g: aid_wrapper(g, mode='oset'))]
+                self.stats['aaid_cpdag'] = [graph_expectation(self.graphs, lambda g: aid_wrapper(g, mode='ancestor'))]
+                self.stats['paid_cpdag'] = [graph_expectation(self.graphs, lambda g: aid_wrapper(g, mode='parent'))]
+                self.stats['oset_aid_cpdag'] = [graph_expectation(self.graphs, lambda g: aid_wrapper(g, mode='oset'))]
 
-            # order aid n/a
-            stats['order_aid'] = [torch.tensor(-1.)]
+                # order aid n/a
+                self.stats['order_aid'] = [torch.tensor(-1.)]
+
+        if self.method == 'beeps':
+            model = Beeps(self.graphs, data)
+            node_label_to_id_dict = {node: i for i, node in enumerate(self.env.node_labels)}
+
+            if self.env.interventional_test_data is not None:
+                print(f'Computing distributional metrics on interventional test data...')
+                mean_errors = []
+                mmds = []
+                with torch.no_grad():
+                    for eidx, exp in enumerate(self.env.interventional_test_data):
+                        print(f'Computing metrics for intervention {eidx}/{len(self.env.interventional_test_data)}')
+                        env_samples = torch.stack([exp.data[node].squeeze() for node in self.env.node_labels], dim=-1)
+                        env_mean = env_samples.mean(dim=0)
+
+                        posterior_mean = model.estimate_aces(exp.interventions, node_label_to_id_dict)
+                        mean_errors.append(posterior_mean - env_mean)
+
+                self.stats['mmd'] = [torch.tensor(-1.)]
+                mean_errors = torch.stack(mean_errors, dim=0)
+                dmae = mean_errors.abs().sum(dim=-1).mean()
+                dmse = mean_errors.pow(2).sum(dim=-1).sqrt().mean()
+                self.stats['dmae'] = [dmae]
+                self.stats['dmse'] = [dmse]
+                print(f'Average distribution mean L1 distance is {dmae}')
+                print(f'Average distribution mean L2 distance is {dmse}')
 
         if self.output_dir is not None:
             num_experiments_conducted = 1
             outpath = os.path.join(self.output_dir,
                                    f'stats-{self.method}-{self.policy}-{self.env.name}'
                                    f'-{self.run_id}-exp-{num_experiments_conducted}.csv')
-            export_stats(stats, outpath)
-
-        if self.method == 'beeps':
-            model = Beeps(graphs, data)
-            num_env_samples = 10000
-            num_nodes = len(self.env.node_labels)
-            node_label_to_id_dict = {node: i for i, node in enumerate(self.env.node_labels)}
-            maes = torch.zeros(num_nodes, num_nodes)
-            for i, node in enumerate(self.env.node_labels):
-                print(f'Computing MAEs for node {node}', flush=True)
-                interventions = {node: torch.tensor(1.)}
-                aces = model.estimate_aces(interventions, node_label_to_id_dict)
-                env_aces = self.env.sample_aces(interventions, num_env_samples).mean(dim=1)
-                maes[:, i] = (aces - env_aces).abs()
-
-            if self.output_dir is not None:
-                df = pd.DataFrame(maes)
-                df.columns = [f'do({node})' for node in self.env.node_labels]
-                outpath = os.path.join(self.output_dir,
-                                       f'stats-{self.method}-{self.policy}-{self.env.name}'
-                                       f'-{self.run_id}-mae.csv')
-                df.to_csv(outpath, index=False)
-
-            return stats, maes
-
-        return stats
+            export_stats(self.stats, outpath)
 
 
 class Gadget:
@@ -435,4 +439,6 @@ class Beeps:
             intervened_weights = (adj_mat * weights[gidx])
             aces[gidx] = np.linalg.inv(np.eye(self.n) - intervened_weights) @ mu
 
-        return torch.tensor(aces).mean(dim=0).float()
+        aces = torch.tensor(aces).mean(dim=0).float()
+        ordered_idc = torch.LongTensor([node_label_to_id_dict[node] for node in node_label_to_id_dict])
+        return aces[ordered_idc]

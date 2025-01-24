@@ -3,6 +3,7 @@ from typing import Dict, Tuple
 import numpy as np
 import torch
 from gadjid import ancestor_aid, parent_aid, oset_aid
+from scipy.stats import wasserstein_distance
 from sklearn.metrics import precision_recall_curve, roc_curve, auc
 
 
@@ -185,3 +186,59 @@ def aid(target: torch.Tensor, prediction: torch.Tensor, mode: str = 'ancestor'):
         distance, _ = ancestor_aid(target, prediction)
 
     return torch.tensor(distance)
+
+
+def rbf_kernel(x: torch.Tensor, y: torch.Tensor, bandwidth=0.2, scale=1000.):
+    distances = torch.cdist(x, y, p=2)
+    return scale * torch.exp(-0.5 * distances ** 2 / bandwidth)
+
+
+def mmd(x: torch.Tensor, y: torch.Tensor, x_weights: torch.Tensor = None, y_weights: torch.Tensor = None,
+        unbiased: bool = True, bandwidth=0.2):
+    assert x_weights is None or x_weights.numel() == x.shape[-2], print(x.shape, x_weights.shape)
+    assert y_weights is None or y_weights.numel() == y.shape[-2], print(y.shape, y_weights.shape)
+
+    # normalise weights and use uniform weights if none are given
+    x_weights = torch.ones(x.shape[-2]) if x_weights is None else x_weights.view(-1)
+    x_weights /= x_weights.sum()
+    y_weights = torch.ones(y.shape[-2]) if y_weights is None else y_weights.view(-1)
+    y_weights /= y_weights.sum()
+
+    # compute E[k(X,X)] term
+    num_x = x_weights.numel()
+    kxx = rbf_kernel(x, x, bandwidth)
+    kxx_weights = x_weights.view(-1, 1) * x_weights.view(1, -1)
+    if unbiased:
+        corr = (1. - x_weights).view(-1, 1)
+        kxx_weights *= (1. - torch.eye(num_x)) / corr
+    xx_term = (kxx * kxx_weights).sum()
+
+    # compute E[k(Y,Y)] term
+    num_y = y_weights.numel()
+    kyy = rbf_kernel(y, y, bandwidth)
+    kyy_weights = y_weights.view(-1, 1) * y_weights.view(1, -1)
+    if unbiased:
+        corr = (1. - y_weights).view(-1, 1)
+        kyy_weights *= (1. - torch.eye(num_y)) / corr
+
+    yy_term = (kyy * kyy_weights).sum()
+
+    # compute E[k(X,Y)] term
+    kxy = rbf_kernel(x, y, bandwidth)
+    kxy_weights = x_weights.view(-1, 1) * y_weights.view(1, -1)
+    xy_term = (kxy * kxy_weights).sum()
+
+    return xx_term - 2. * xy_term + yy_term
+
+
+def earth_movers_distance(x: torch.Tensor, y: torch.Tensor, x_weights: torch.Tensor = None,
+                          y_weights: torch.Tensor = None):
+    assert x_weights is None or x_weights.numel() == x.shape[-2], print(x.shape, x_weights.shape)
+    assert y_weights is None or y_weights.numel() == y.shape[-2], print(y.shape, y_weights.shape)
+
+    num_dims = x.shape[-1]
+
+    emd = torch.tensor(0.)
+    for i in range(num_dims):
+        emd += wasserstein_distance(x[..., i], y[..., i], x_weights, y_weights)
+    return emd / num_dims

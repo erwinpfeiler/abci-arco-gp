@@ -120,7 +120,7 @@ class ABCIBase:
         output_dir = self.cfg.output_dir if output_dir is None else output_dir
         if output_dir is not None:
             num_experiments_conducted = len(self.experiments)
-            outpath = os.path.join(self.cfg.output_dir,
+            outpath = os.path.join(output_dir,
                                    f'{self.cfg.model_name}-{self.cfg.policy}-{self.env.name}'
                                    f'-{self.cfg.run_id}-exp-{num_experiments_conducted}.pth')
 

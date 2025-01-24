@@ -177,8 +177,8 @@ class GaussianProcessConfig:
 class GPModelConfig:
     imll_mc_samples: int = 50  # number of ancestral mc samples to estimate an interventional mll
     opt_batch_size: int = 20  # maximum number of GP for which to update HP simulateniously to avoid out of mem
-    discard_threshold_gps: int = 110000  # max number of mechanisms to keep in model
-    discard_threshold_topo_orders: int = 10000  # max number of mechanisms to keep in model
+    discard_threshold_gps: int = 70000  # max number of mechanisms to keep in model
+    discard_threshold_topo_orders: int = 30000  # max number of mechanisms to keep in model
     linear: bool = False  # linear GP kernel
 
     # gp hyperparam training
@@ -542,7 +542,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     # eval parameters
     num_mc_cos: int = 100
     num_mc_graphs: int = 10
-    compute_distributional_stats: bool = False
+    compute_distributional_stats: bool = True
     num_samples_per_graph = 10
 
     # training parameters

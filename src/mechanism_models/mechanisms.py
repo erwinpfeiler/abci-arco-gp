@@ -222,15 +222,17 @@ class GaussianRootNode(Mechanism):
         return params
 
     def load_param_dict(self, param_dict):
-        self.mu_0 = param_dict['mu_0']
-        self.kappa_0 = param_dict['kappa_0']
-        self.alpha_0 = param_dict['alpha_0']
-        self.beta_0 = param_dict['beta_0']
+        self.mu_0 = param_dict['mu_0'].float()
+        self.kappa_0 = param_dict['kappa_0'].float()
+        self.alpha_0 = param_dict['alpha_0'].float()
+        self.beta_0 = param_dict['beta_0'].float()
         self.lam_0 = param_dict['lam_0']
-        self.mu_n = param_dict['mu_n']
-        self.kappa_n = param_dict['kappa_n']
-        self.alpha_n = param_dict['alpha_n']
-        self.beta_n = param_dict['beta_n']
+        if self.lam_0 is not None:
+            self.lam_0 = self.lam_0.float()
+        self.mu_n = param_dict['mu_n'].float()
+        self.kappa_n = param_dict['kappa_n'].float()
+        self.alpha_n = param_dict['alpha_n'].float()
+        self.beta_n = param_dict['beta_n'].float()
         self.static = param_dict['static']
         self.cfg = GaussianRootNodeConfig()
         self.cfg.load_param_dict(param_dict['cfg_param_dict'])
@@ -323,10 +325,10 @@ class GaussianProcess(Mechanism):
             return params
 
         def load_param_dict(self, param_dict):
-            self.posterior_noise = param_dict['posterior_noise']
-            self.posterior_outputscale = param_dict['posterior_outputscale']
-            self.posterior_lengthscale = param_dict['posterior_lengthscale']
-            self.posterior_scale_mix = param_dict['posterior_scale_mix']
+            self.posterior_noise = param_dict['posterior_noise'].float()
+            self.posterior_outputscale = param_dict['posterior_outputscale'].float()
+            self.posterior_lengthscale = param_dict['posterior_lengthscale'].float()
+            self.posterior_scale_mix = param_dict['posterior_scale_mix'].float()
 
     ##########################################################################
     # Linear GP Model
@@ -402,9 +404,9 @@ class GaussianProcess(Mechanism):
             return params
 
         def load_param_dict(self, param_dict):
-            self.posterior_noise = param_dict['posterior_noise']
-            self.posterior_outputscale = param_dict['posterior_outputscale']
-            self.posterior_offset = param_dict['posterior_offset']
+            self.posterior_noise = param_dict['posterior_noise'].float()
+            self.posterior_outputscale = param_dict['posterior_outputscale'].float()
+            self.posterior_offset = param_dict['posterior_offset'].float()
 
     ##########################################################################
     # Main-class functions
@@ -519,8 +521,8 @@ class GaussianProcess(Mechanism):
                                                            param_dict=param_dict['gp_param_dict'])
 
         if self.static:
-            train_inputs = param_dict['train_inputs'][0].double()
-            train_targets = param_dict['train_targets'].double()
+            train_inputs = param_dict['train_inputs'][0].float()
+            train_targets = param_dict['train_targets'].float()
             self.set_data(train_inputs, train_targets)
 
 

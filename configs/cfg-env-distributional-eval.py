@@ -63,12 +63,12 @@ class GaussianRootNodeConfig:
     mu_0: float = 0.
     kappa_0: float = 1.
     # generation setup
-    # alpha_0: float = 5.
-    # beta_0: float = 10.
+    alpha_0: float = 5.
+    beta_0: float = 10.
 
     # inference setup (normalised data)
-    alpha_0: float = 10.
-    beta_0: float = 10.
+    # alpha_0: float = 10.
+    # beta_0: float = 10.
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'mu_0': self.mu_0,
@@ -123,20 +123,8 @@ class GaussianProcessConfig:
     support_max: float = 10.
 
     # generation setup
-    # noise_var_concentration: float = 50.
-    # noise_var_rate: float = 50.
-    # outscale_concentration: float = 100.
-    # outscale_rate: float = 10.
-    # lscale_concentration_multiplier: float = 30.
-    # lscale_rate: float = 30.
-    # scale_mix_concentration: float = 20.
-    # scale_mix_rate: float = 10.
-    # offset_loc: float = 0.
-    # offset_scale: float = 3.
-
-    # inference setup (normalised data)
-    noise_var_concentration: float = 2.
-    noise_var_rate: float = 8.
+    noise_var_concentration: float = 50.
+    noise_var_rate: float = 50.
     outscale_concentration: float = 100.
     outscale_rate: float = 10.
     lscale_concentration_multiplier: float = 30.
@@ -144,7 +132,19 @@ class GaussianProcessConfig:
     scale_mix_concentration: float = 20.
     scale_mix_rate: float = 10.
     offset_loc: float = 0.
-    offset_scale: float = 0.5
+    offset_scale: float = 3.
+
+    # inference setup (normalised data)
+    # noise_var_concentration: float = 2.
+    # noise_var_rate: float = 8.
+    # outscale_concentration: float = 100.
+    # outscale_rate: float = 10.
+    # lscale_concentration_multiplier: float = 30.
+    # lscale_rate: float = 30.
+    # scale_mix_concentration: float = 20.
+    # scale_mix_rate: float = 10.
+    # offset_loc: float = 0.
+    # offset_scale: float = 0.5
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'num_support_points': self.num_support_points,
@@ -177,8 +177,8 @@ class GaussianProcessConfig:
 class GPModelConfig:
     imll_mc_samples: int = 50  # number of ancestral mc samples to estimate an interventional mll
     opt_batch_size: int = 20  # maximum number of GP for which to update HP simulateniously to avoid out of mem
-    discard_threshold_gps: int = 110000  # max number of mechanisms to keep in model
-    discard_threshold_topo_orders: int = 10000  # max number of mechanisms to keep in model
+    discard_threshold_gps: int = 70000  # max number of mechanisms to keep in model
+    discard_threshold_topo_orders: int = 30000  # max number of mechanisms to keep in model
     linear: bool = False  # linear GP kernel
 
     # gp hyperparam training
@@ -542,7 +542,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     # eval parameters
     num_mc_cos: int = 100
     num_mc_graphs: int = 10
-    compute_distributional_stats: bool = False
+    compute_distributional_stats: bool = True
     num_samples_per_graph = 10
 
     # training parameters

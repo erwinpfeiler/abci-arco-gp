@@ -29,6 +29,22 @@ class Experiment:
         for node, value in self.interventions.items():
             self.interventions[node] = (value - means[node]) / stds[node]
 
+    def unnormalise(self, means: Dict[str, torch.Tensor], stds: Dict[str, torch.Tensor]):
+        assert len(means) == len(self.data), print(means)
+        assert len(stds) == len(self.data), print(stds)
+
+        new_data = {}
+        # unnormalise data
+        for node in self.data:
+            new_data[node] = self.data[node] * stds[node] + means[node]
+
+        # normalise intervention values
+        new_interventions = {}
+        for node, value in self.interventions.items():
+            new_interventions[node] = value * stds[node] + means[node]
+
+        return Experiment(new_interventions, new_data)
+
     def cuda(self):
         for key in self.data:
             self.data[key] = self.data[key].cuda()
