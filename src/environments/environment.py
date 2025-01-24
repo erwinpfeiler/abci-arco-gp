@@ -297,24 +297,30 @@ class Environment:
         aces = torch.stack([aces[node] for node in self.node_labels], dim=0)
         return aces
 
-    def log_likelihood(self, experiments: List[Experiment]) -> torch.Tensor:
+    def log_likelihood(self, experiments: List[Experiment], reduce: bool = True) -> torch.Tensor:
+        # if data is normalised, we need to un-normalise the data before computing the log-likelihood
+        scaled_experiments = experiments
+        if self.cfg.normalise_data:
+            scaled_experiments = [exp.unnormalise(self.normalisation_means, self.normalisation_stds) for exp in
+                                  experiments]
+
         ll = torch.tensor(0.)
         for node in self.node_labels:
             # gather data from the experiments
             parents = get_parents(node, self.graph)
-            inputs, targets = gather_data(experiments, node, parents=parents, mode='independent_samples')
+            inputs, targets = gather_data(scaled_experiments, node, parents=parents, mode='independent_samples')
 
             # check if we have any data for this node and compute log-likelihood
             mechanism_ll = torch.tensor(0.)
             if targets is not None:
                 try:
                     with torch.no_grad():
-                        mechanism_ll = self.mechanisms[node].mll(inputs, targets, prior_mode=False)
+                        mechanism_ll = self.mechanisms[node].mll(inputs, targets, prior_mode=False, reduce=reduce)
                 except Exception as e:
                     print(f'Exception occured in Environment.log_likelihood() when computing LL for mechanism {node}:')
                     print(e)
 
-            ll += mechanism_ll
+            ll = ll + mechanism_ll
         return ll
 
     def interventional_mll(self, targets, node: str, interventions: dict, reduce=True):
