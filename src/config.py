@@ -118,11 +118,15 @@ class AdditiveSigmoidsConfig:
 
 
 class GaussianProcessConfig:
+    # general setup
+    per_dim_lenghtscale: bool = False
+
+    # setup for sampling ground-truth mechanisms
     num_support_points: int = 50
     support_min: float = -10.
     support_max: float = 10.
 
-    # generation setup
+    # hyper-prior params for ground-truth model generation
     # noise_var_concentration: float = 50.
     # noise_var_rate: float = 50.
     # outscale_concentration: float = 100.
@@ -134,7 +138,7 @@ class GaussianProcessConfig:
     # offset_loc: float = 0.
     # offset_scale: float = 3.
 
-    # inference setup (normalised data)
+    # hyper-prior params for inference (normalised data)
     noise_var_concentration: float = 2.
     noise_var_rate: float = 8.
     outscale_concentration: float = 100.
@@ -147,7 +151,8 @@ class GaussianProcessConfig:
     offset_scale: float = 0.5
 
     def param_dict(self) -> Dict[str, Any]:
-        params = {'num_support_points': self.num_support_points,
+        params = {'per_dim_lenghtscale': self.per_dim_lenghtscale,
+                  'num_support_points': self.num_support_points,
                   'support_min': self.support_min,
                   'support_max': self.support_max,
                   'noise_var_concentration': self.noise_var_concentration,
@@ -161,6 +166,7 @@ class GaussianProcessConfig:
         return params
 
     def load_param_dict(self, param_dict):
+        self.per_dim_lenghtscale = param_dict['per_dim_lenghtscale']
         self.num_support_points = param_dict['num_support_points']
         self.support_min = param_dict['support_min']
         self.support_max = param_dict['support_max']

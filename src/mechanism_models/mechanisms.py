@@ -10,7 +10,7 @@ from gpytorch.kernels import RQKernel, LinearKernel, ScaleKernel
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.means import ZeroMean, ConstantMean
 from gpytorch.models import ExactGP
-from torch import Tensor
+from torch import Tensor, Size
 from torch.nn import Module, ModuleDict
 from torch.nn.utils import vector_to_parameters
 
@@ -163,7 +163,7 @@ class GaussianRootNode(Mechanism):
         if self.static:
             # sample from true distribution
             y_dist = dist.Normal(self.mu_0, self.lam_0.pow(-0.5))
-            return y_dist.sample(torch.Size(output_shape))
+            return y_dist.sample(Size(output_shape))
 
         # sample from marginal likelihood
         if prior_mode:
@@ -171,11 +171,11 @@ class GaussianRootNode(Mechanism):
         else:
             mu_n, kappa_n, alpha_n, beta_n = (self.mu_n, self.kappa_n, self.alpha_n, self.beta_n)
 
-        lambdas = dist.Gamma(alpha_n, beta_n).sample(torch.Size(output_shape[:-2]))
+        lambdas = dist.Gamma(alpha_n, beta_n).sample(Size(output_shape[:-2]))
         mus = dist.Normal(mu_n.expand_as(lambdas), (kappa_n * lambdas).pow(-0.5)).sample()
 
         y_dist = dist.Normal(mus, lambdas.pow(-0.5))
-        samples = y_dist.sample(torch.Size(output_shape[-2:-1])).unsqueeze(-1).transpose(0, -1).view(output_shape)
+        samples = y_dist.sample(Size(output_shape[-2:-1])).unsqueeze(-1).transpose(0, -1).view(output_shape)
         return samples
 
     def mll(self, inputs: Tensor, targets: Tensor, prior_mode=False, reduce=True):
@@ -255,10 +255,14 @@ class GaussianProcess(Mechanism):
         posterior_scale_mix: Tensor
 
         def __init__(self, in_size: int, cfg: GaussianProcessConfig, param_dict: Dict[str, Any] = None):
+            assert in_size > 0, print(f'Invalid input dimensions {in_size}!')
             likelihood = GaussianLikelihood()
             super().__init__(None, None, likelihood)
+            self.in_size = in_size
+            self.cfg = cfg
             self.mean_module = ZeroMean()
-            self.covar_module = ScaleKernel(RQKernel())
+            ard_num_dims = in_size if self.cfg.per_dim_lenghtscale else 1
+            self.covar_module = ScaleKernel(RQKernel(ard_num_dims=ard_num_dims))
 
             # init hp priors
             # ATTENTION: do not name the HP priors "noise_prior", "outputscale_prior" or "lengthscale_prior"
@@ -284,7 +288,7 @@ class GaussianProcess(Mechanism):
         def hyperparam_log_prior(self):
             log_prior = self.noise_var_prior.log_prob(self.likelihood.noise) + \
                         self.outscale_prior.log_prob(self.covar_module.outputscale) + \
-                        self.lscale_prior.log_prob(self.covar_module.base_kernel.lengthscale) + \
+                        self.lscale_prior.log_prob(self.covar_module.base_kernel.lengthscale).mean() + \
                         self.scale_mix_prior.log_prob(self.covar_module.base_kernel.alpha)
             return log_prior.squeeze()
 
@@ -292,7 +296,8 @@ class GaussianProcess(Mechanism):
             noise_var = self.noise_var_prior.sample()
             self.posterior_noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
             self.posterior_outputscale = self.outscale_prior.sample()
-            self.posterior_lengthscale = self.lscale_prior.sample()
+            ls_size = Size((self.in_size,)) if self.cfg.per_dim_lenghtscale else Size((1,))
+            self.posterior_lengthscale = self.lscale_prior.sample(ls_size)
             self.posterior_scale_mix = self.scale_mix_prior.sample()
 
         def select_hyperparameters(self, posterior_hp: bool):
@@ -316,17 +321,20 @@ class GaussianProcess(Mechanism):
                 # draw HPs from HP prior
                 self.likelihood.noise = self.noise_var_prior.sample()
                 self.covar_module.outputscale = self.outscale_prior.sample()
-                self.covar_module.base_kernel.lengthscale = self.lscale_prior.sample()
+                ls_size = Size((self.in_size,)) if self.cfg.per_dim_lenghtscale else Size((1,))
+                self.covar_module.base_kernel.lengthscale = self.lscale_prior.sample(ls_size)
                 self.covar_module.base_kernel.alpha = self.scale_mix_prior.sample()
 
         def param_dict(self) -> Dict[str, Any]:
-            params = {'posterior_noise': self.posterior_noise,
+            params = {'in_size': self.in_size,
+                      'posterior_noise': self.posterior_noise,
                       'posterior_outputscale': self.posterior_outputscale,
                       'posterior_lengthscale': self.posterior_lengthscale,
                       'posterior_scale_mix': self.posterior_scale_mix}
             return params
 
         def load_param_dict(self, param_dict):
+            self.in_size = param_dict['in_size']
             self.posterior_noise = param_dict['posterior_noise'].float()
             self.posterior_outputscale = param_dict['posterior_outputscale'].float()
             self.posterior_lengthscale = param_dict['posterior_lengthscale'].float()
@@ -681,7 +689,8 @@ class SharedDataGaussianProcess(Mechanism):
 
             _, parents = resolve_mechanism_key(key)
             active_dims = torch.LongTensor([self.node_to_dim_map[node] for node in parents])
-            kernel = ScaleKernel(RQKernel(active_dims=active_dims))
+            ard_num_dims = len(parents) if self.cfg.per_dim_lenghtscale else 1
+            kernel = ScaleKernel(RQKernel(active_dims=active_dims, ard_num_dims=ard_num_dims))
             kernel.eval()
             self.kernels[key] = kernel
 
@@ -707,7 +716,9 @@ class SharedDataGaussianProcess(Mechanism):
             noise_var = self.noise_var_prior.sample()
             self.likelihoods[key].noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
             self.kernels[key].outputscale = self.outscale_prior.sample()
-            self.kernels[key].base_kernel.lengthscale = self.lscale_priors[key].sample()
+            _, parents = resolve_mechanism_key(key)
+            ls_size = Size((len(parents),)) if self.cfg.per_dim_lenghtscale else Size((1,))
+            self.kernels[key].base_kernel.lengthscale = self.lscale_priors[key].sample(ls_size)
             self.kernels[key].base_kernel.alpha = self.scale_mix_prior.sample()
 
         def forward(self, x, key: str):
@@ -718,7 +729,7 @@ class SharedDataGaussianProcess(Mechanism):
         def hyperparam_log_prior(self, key: str):
             log_prior = self.noise_var_prior.log_prob(self.likelihoods[key].noise) + \
                         self.outscale_prior.log_prob(self.kernels[key].outputscale) + \
-                        self.lscale_priors[key].log_prob(self.kernels[key].base_kernel.lengthscale) + \
+                        self.lscale_priors[key].log_prob(self.kernels[key].base_kernel.lengthscale).mean() + \
                         self.scale_mix_prior.log_prob(self.kernels[key].base_kernel.alpha)
             return log_prior.squeeze()
 
@@ -807,7 +818,6 @@ class SharedDataGaussianProcess(Mechanism):
     def activate(self, key: str):
         if not self.exists(key):
             self.init_kernel(key)
-            self.gp.init_hyperparams(key)
 
         self.gp.likelihood = self.gp.likelihoods[key]
         self.gp._clear_cache()
@@ -914,11 +924,11 @@ class AdditiveSigmoids(Mechanism):
     def init_hyperparams(self):
         noise_var = self.noise_var_prior.sample()
         self.noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
-        self.outscales = self.outscale_prior.sample(torch.Size((self.in_size,)))
+        self.outscales = self.outscale_prior.sample(Size((self.in_size,)))
         if torch.rand(1).round():
             self.outscales = -self.outscales
-        self.lengthscales = self.lscale_prior.sample(torch.Size((self.in_size,)))
-        self.offsets = self.offset_prior.sample(torch.Size((self.in_size,)))
+        self.lengthscales = self.lscale_prior.sample(Size((self.in_size,)))
+        self.offsets = self.offset_prior.sample(Size((self.in_size,)))
 
     def forward(self, inputs: Tensor, prior_mode=False):
         self._check_args(inputs)
