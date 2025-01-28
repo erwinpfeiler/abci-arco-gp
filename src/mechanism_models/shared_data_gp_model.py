@@ -304,45 +304,6 @@ class SharedDataGaussianProcessModel:
             tmp = [None for time in self.topological_order_sample_times.values() if time == sample_time]
             return len(tmp)
 
-    def gp_mlls(self, experiments: List[Experiment], keys: List[str] = None, prior_mode=False) -> torch.Tensor:
-        # if no keys are given compute mlls for all mechanisms
-        if keys is None:
-            keys = [self.gps[node].get_keys() for node in self.node_labels]
-            keys = list(itertools.chain(*keys))
-
-        # sort keys by target node and filter out non-gps
-        keys_by_target = {node: [] for node in self.node_labels}
-        for key in keys:
-            node, parents = resolve_mechanism_key(key)
-            if len(parents) > 0:
-                keys_by_target[node].append((key, parents))
-
-        mlls = torch.tensor(0.)
-        for node in self.node_labels:
-            # check if any mechanism in keys targets 'node'
-            if len(keys_by_target[node]) == 0:
-                continue
-
-            # gather data from the experiments
-            inputs, targets = gather_data(experiments, node, parents=self.node_labels, mode='joint')
-
-            # check if we have any data for this node
-            if targets is None:
-                continue
-
-            for key, parents in keys_by_target[node]:
-                # compute marginal log-likelihood
-                try:
-                    mlls += self.gps[node].mll(inputs, targets, key, prior_mode) / targets.numel()
-                except Exception as e:
-                    print(
-                        f'Exception occured in SharedDataGaussianProcessModel.gp_mlls() when computing MLL for '
-                        f'mechanism {key} with prior mode {prior_mode}:')
-                    print(e)
-                    print('Resampling GP hyperparameters...')
-                    self.gps[node].init_hyperparams(key)
-        return mlls
-
     def set_data(self, experiments: List[Experiment]):
         for node in self.node_labels:
             # gather data from the experiments
@@ -427,8 +388,9 @@ class SharedDataGaussianProcessModel:
                     node_samples = self.root_mechs[node].sample(torch.empty(num_samples, 1, 1))
                     ace_samples = self.root_mechs[node](torch.empty(num_samples, 1, 1)).squeeze()
                 else:
-                    node_samples = self.gps[node].sample(x, get_mechanism_key(node, parents))
-                    ace_samples = self.gps[node](x, get_mechanism_key(node, parents)).squeeze()
+                    key = get_mechanism_key(node, parents)
+                    node_samples = self.gps[node].sample(x, key)
+                    ace_samples = self.gps[node](x, key).squeeze()
 
             # store samples
             x[:, :, self.node_to_dim_map[node]] = node_samples.squeeze(-1)
