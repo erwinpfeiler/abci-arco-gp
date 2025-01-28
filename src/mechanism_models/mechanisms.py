@@ -5,6 +5,12 @@ from typing import List, Tuple, Dict, Any
 import gpytorch
 import torch
 import torch.distributions as dist
+from gpytorch.distributions import MultivariateNormal
+from gpytorch.kernels import RQKernel, LinearKernel, ScaleKernel
+from gpytorch.likelihoods import GaussianLikelihood
+from gpytorch.means import ZeroMean, ConstantMean
+from gpytorch.models import ExactGP
+from torch import Tensor
 from torch.nn import Module, ModuleDict
 from torch.nn.utils import vector_to_parameters
 
@@ -46,15 +52,15 @@ class Mechanism(Module):
         super().__init__()
         self.in_size = in_size
 
-    def _check_args(self, inputs: torch.Tensor = None, targets: torch.Tensor = None):
+    def _check_args(self, inputs: Tensor = None, targets: Tensor = None):
         """
         Checks the generic argument shapes (inputs and targets) and their compatibility.
 
         Parameters
         ----------
-        inputs : torch.Tensor
+        inputs : Tensor
             Mechanism inputs.
-        targets : torch.Tensor
+        targets : Tensor
             Mechanism targets, e.g., for evaluating the marginal log-likelihood.
         """
         if inputs is not None:
@@ -66,27 +72,27 @@ class Mechanism(Module):
             assert inputs.shape[:-1] == targets.shape, print(f'Batch size mismatch: {inputs.shape} vs.'
                                                              f' {targets.shape}')
 
-    def forward(self, inputs: torch.Tensor, prior_mode: bool = False):
+    def forward(self, inputs: Tensor, prior_mode: bool = False):
         """
         Computes the mechanism output for a given input tensor. Must be implemented by all child classes.
 
         Parameters
         ----------
-        inputs : torch.Tensor
+        inputs : Tensor
             Mechanism inputs.
         prior_mode : bool
             Whether to evaluate the mechanism with prior or posterior parameters.
         """
         raise NotImplementedError
 
-    def sample(self, inputs: torch.Tensor, prior_mode: bool = False):
+    def sample(self, inputs: Tensor, prior_mode: bool = False):
         """
         Generates samples a given input tensor according to the implemented likelihood model. Must be implemented by
         all child classes.
 
         Parameters
         ----------
-        inputs : torch.Tensor
+        inputs : Tensor
             Mechanism inputs.
         prior_mode : bool
             Whether to evaluate the mechanism with prior or posterior parameters.
@@ -113,7 +119,7 @@ class GaussianRootNode(Mechanism):
             if static:
                 self.init_as_static()
 
-    def compute_posterior_params(self, targets: torch.Tensor, prior_mode=False):
+    def compute_posterior_params(self, targets: Tensor, prior_mode=False):
         self._check_args(targets=targets)
 
         full_targets = targets
@@ -135,13 +141,13 @@ class GaussianRootNode(Mechanism):
         self.lam_0 = dist.Gamma(self.alpha_0, self.beta_0).sample()
         self.mu_0 = dist.Normal(0., (self.kappa_0 * self.lam_0).pow(-0.5)).sample()
 
-    def set_data(self, inputs: torch.Tensor, targets: torch.Tensor):
+    def set_data(self, inputs: Tensor, targets: Tensor):
         self._check_args(targets=targets)
         assert targets.dim() == 1, print('Can only work with one set of posterior params!')
         self.train_targets = targets
         self.mu_n, self.kappa_n, self.alpha_n, self.beta_n = self.compute_posterior_params(targets, prior_mode=True)
 
-    def forward(self, inputs: torch.Tensor, prior_mode=False):
+    def forward(self, inputs: Tensor, prior_mode=False):
         assert inputs.dim() >= 2
         output_shape = (*inputs.shape[:-1], 1)
 
@@ -150,7 +156,7 @@ class GaussianRootNode(Mechanism):
 
         return self.mu_n * torch.ones(output_shape)
 
-    def sample(self, inputs: torch.Tensor, prior_mode=False):
+    def sample(self, inputs: Tensor, prior_mode=False):
         assert inputs.dim() >= 2
         output_shape = (*inputs.shape[:-1], 1)
 
@@ -172,7 +178,7 @@ class GaussianRootNode(Mechanism):
         samples = y_dist.sample(torch.Size(output_shape[-2:-1])).unsqueeze(-1).transpose(0, -1).view(output_shape)
         return samples
 
-    def mll(self, inputs: torch.Tensor, targets: torch.Tensor, prior_mode=False, reduce=True):
+    def mll(self, inputs: Tensor, targets: Tensor, prior_mode=False, reduce=True):
         self._check_args(targets=targets)
         output_shape = targets.shape[:-1]
         if self.static:
@@ -194,7 +200,7 @@ class GaussianRootNode(Mechanism):
             return lls.sum()
         return lls
 
-    def expected_noise_entropy(self, prior_mode: bool = False) -> torch.Tensor:
+    def expected_noise_entropy(self, prior_mode: bool = False) -> Tensor:
         if self.static:
             return dist.Normal(self.mu_0, self.lam_0.pow(-0.5)).entropy()
 
@@ -242,17 +248,17 @@ class GaussianProcess(Mechanism):
     ##########################################################################
     # RQ Kernel GP model
     ##########################################################################
-    class ExactGPModelRQKernel(gpytorch.models.ExactGP):
-        posterior_noise: torch.Tensor
-        posterior_outputscale: torch.Tensor
-        posterior_lengthscale: torch.Tensor
-        posterior_scale_mix: torch.Tensor
+    class GaussianProcessRQKernel(ExactGP):
+        posterior_noise: Tensor
+        posterior_outputscale: Tensor
+        posterior_lengthscale: Tensor
+        posterior_scale_mix: Tensor
 
         def __init__(self, in_size: int, cfg: GaussianProcessConfig, param_dict: Dict[str, Any] = None):
-            likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            likelihood = GaussianLikelihood()
             super().__init__(None, None, likelihood)
-            self.mean_module = gpytorch.means.ZeroMean()
-            self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RQKernel())
+            self.mean_module = ZeroMean()
+            self.covar_module = ScaleKernel(RQKernel())
 
             # init hp priors
             # ATTENTION: do not name the HP priors "noise_prior", "outputscale_prior" or "lengthscale_prior"
@@ -273,7 +279,7 @@ class GaussianProcess(Mechanism):
         def forward(self, x):
             mean = self.mean_module(x)
             covar = self.covar_module(x)
-            return gpytorch.distributions.MultivariateNormal(mean, covar)
+            return MultivariateNormal(mean, covar)
 
         def hyperparam_log_prior(self):
             log_prior = self.noise_var_prior.log_prob(self.likelihood.noise) + \
@@ -312,10 +318,6 @@ class GaussianProcess(Mechanism):
                 self.covar_module.outputscale = self.outscale_prior.sample()
                 self.covar_module.base_kernel.lengthscale = self.lscale_prior.sample()
                 self.covar_module.base_kernel.alpha = self.scale_mix_prior.sample()
-                # self.likelihood.noise = self.noise_var_prior.mean
-                # self.covar_module.outputscale = self.outscale_prior.mean
-                # self.covar_module.base_kernel.lengthscale = self.lscale_prior.mean
-                # self.covar_module.base_kernel.alpha = self.scale_mix_prior.mean
 
         def param_dict(self) -> Dict[str, Any]:
             params = {'posterior_noise': self.posterior_noise,
@@ -333,16 +335,16 @@ class GaussianProcess(Mechanism):
     ##########################################################################
     # Linear GP Model
     ##########################################################################
-    class ExactGPModelLinearKernel(gpytorch.models.ExactGP):
-        posterior_noise: torch.Tensor
-        posterior_outputscale: torch.Tensor
-        posterior_offset: torch.Tensor
+    class GaussianProcessLinearKernel(ExactGP):
+        posterior_noise: Tensor
+        posterior_outputscale: Tensor
+        posterior_offset: Tensor
 
         def __init__(self, cfg: GaussianProcessConfig, param_dict: Dict[str, Any] = None):
-            likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            likelihood = GaussianLikelihood()
             super().__init__(None, None, likelihood)
-            self.mean_module = gpytorch.means.ConstantMean()
-            self.covar_module = gpytorch.kernels.LinearKernel()
+            self.mean_module = ConstantMean()
+            self.covar_module = LinearKernel()
 
             # init hp priors
             # ATTENTION: do not name the HP priors "noise_prior", "outputscale_prior" or "lengthscale_prior"
@@ -362,7 +364,7 @@ class GaussianProcess(Mechanism):
         def forward(self, x):
             mean = self.mean_module(x)
             covar = self.covar_module(x)
-            return gpytorch.distributions.MultivariateNormal(mean, covar)
+            return MultivariateNormal(mean, covar)
 
         def hyperparam_log_prior(self):
             log_prior = self.noise_var_prior.log_prob(self.likelihood.noise) + \
@@ -423,9 +425,9 @@ class GaussianProcess(Mechanism):
             # initialize likelihood and gp model
             self.linear = linear
             if linear:
-                self.gp = GaussianProcess.ExactGPModelLinearKernel(self.cfg)
+                self.gp = GaussianProcess.GaussianProcessLinearKernel(self.cfg)
             else:
-                self.gp = GaussianProcess.ExactGPModelRQKernel(in_size, self.cfg)
+                self.gp = GaussianProcess.GaussianProcessRQKernel(in_size, self.cfg)
 
             self.static = static
             if static:
@@ -445,11 +447,11 @@ class GaussianProcess(Mechanism):
         # update GP data
         self.set_data(train_x, train_y)
 
-    def set_data(self, inputs: torch.Tensor, targets: torch.Tensor):
+    def set_data(self, inputs: Tensor, targets: Tensor):
         self._check_args(inputs, targets)
         self.gp.set_train_data(inputs, targets, strict=False)
 
-    def forward(self, inputs: torch.Tensor, prior_mode=False):
+    def forward(self, inputs: Tensor, prior_mode=False):
         self._check_args(inputs)
         output_shape = (*inputs.shape[:-1], 1)
 
@@ -458,7 +460,7 @@ class GaussianProcess(Mechanism):
             f_dist = self.gp(inputs)
         return f_dist.mean.view(output_shape)
 
-    def sample(self, inputs: torch.Tensor, prior_mode=False):
+    def sample(self, inputs: Tensor, prior_mode=False):
         self._check_args(inputs)
         output_shape = (*inputs.shape[:-1], 1)
 
@@ -468,7 +470,7 @@ class GaussianProcess(Mechanism):
         y_dist = self.gp.likelihood(f_dist.mean) if self.static else self.gp.likelihood(f_dist)
         return y_dist.sample().view(output_shape)
 
-    def mll(self, inputs: torch.Tensor, targets: torch.Tensor, prior_mode=False, reduce=True):
+    def mll(self, inputs: Tensor, targets: Tensor, prior_mode=False, reduce=True):
         self._check_args(inputs, targets)
         output_shape = targets.shape[:-1]
         with gpytorch.settings.prior_mode(prior_mode):
@@ -486,7 +488,7 @@ class GaussianProcess(Mechanism):
             return mlls.sum()
         return mlls
 
-    def expected_noise_entropy(self, prior_mode: bool = False) -> torch.Tensor:
+    def expected_noise_entropy(self, prior_mode: bool = False) -> Tensor:
         # use point estimate with the MAP variance
         posterior_hp = self.gp.posterior_hp
         self.gp.select_hyperparameters(not prior_mode)
@@ -515,10 +517,10 @@ class GaussianProcess(Mechanism):
         self.linear = param_dict['linear']
 
         if self.linear:
-            self.gp = GaussianProcess.ExactGPModelLinearKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
+            self.gp = GaussianProcess.GaussianProcessLinearKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
         else:
-            self.gp = GaussianProcess.ExactGPModelRQKernel(self.in_size, self.cfg,
-                                                           param_dict=param_dict['gp_param_dict'])
+            self.gp = GaussianProcess.GaussianProcessRQKernel(self.in_size, self.cfg,
+                                                              param_dict=param_dict['gp_param_dict'])
 
         if self.static:
             train_inputs = param_dict['train_inputs'][0].float()
@@ -530,11 +532,11 @@ class SharedDataGaussianProcess(Mechanism):
     ##########################################################################
     # Shared-data GP Linear Kernel Model
     ##########################################################################
-    class SharedDataGPLinearKernel(gpytorch.models.ExactGP):
+    class SharedDataGPLinearKernel(ExactGP):
         def __init__(self, cfg: GaussianProcessConfig, node_to_dim_map: Dict[str, int] = None,
                      param_dict: Dict[str, Any] = None):
             assert node_to_dim_map is not None or param_dict is not None
-            likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            likelihood = GaussianLikelihood()
             super().__init__(None, None, likelihood)
             self.cfg = cfg
 
@@ -553,17 +555,17 @@ class SharedDataGaussianProcess(Mechanism):
             self.offset_prior = dist.Normal(cfg.offset_loc, cfg.offset_scale)
 
         def init_kernel(self, key: str):
-            likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            likelihood = GaussianLikelihood()
             likelihood.eval()
             self.likelihoods[key] = likelihood
 
             _, parents = resolve_mechanism_key(key)
             active_dims = torch.LongTensor([self.node_to_dim_map[node] for node in parents])
-            kernel = gpytorch.kernels.LinearKernel(active_dims=active_dims)
+            kernel = LinearKernel(active_dims=active_dims)
             kernel.eval()
             self.kernels[key] = kernel
 
-            mean = gpytorch.means.ConstantMean()
+            mean = ConstantMean()
             mean.eval()
             self.means[key] = mean
 
@@ -596,7 +598,7 @@ class SharedDataGaussianProcess(Mechanism):
         def forward(self, x, key: str):
             mean = self.means[key](x)
             covar = self.kernels[key](x)
-            return gpytorch.distributions.MultivariateNormal(mean, covar)
+            return MultivariateNormal(mean, covar)
 
         def hyperparam_log_prior(self, key: str):
             log_prior = self.noise_var_prior.log_prob(self.likelihoods[key].noise) + \
@@ -649,14 +651,14 @@ class SharedDataGaussianProcess(Mechanism):
     ##########################################################################
     # Shared-data GP  RQ-Kernel Model
     ##########################################################################
-    class SharedDataGPRQKernel(gpytorch.models.ExactGP):
+    class SharedDataGPRQKernel(ExactGP):
         def __init__(self, cfg: GaussianProcessConfig, node_to_dim_map: Dict[str, int] = None,
                      param_dict: Dict[str, Any] = None):
             assert node_to_dim_map is not None or param_dict is not None
-            likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            likelihood = GaussianLikelihood()
             super().__init__(None, None, likelihood)
             self.cfg = cfg
-            self.mean_module = gpytorch.means.ZeroMean()
+            self.mean_module = ZeroMean()
 
             if param_dict is not None:
                 self.load_param_dict(param_dict)
@@ -673,13 +675,13 @@ class SharedDataGaussianProcess(Mechanism):
             self.scale_mix_prior = dist.Gamma(cfg.scale_mix_concentration, cfg.scale_mix_rate)
 
         def init_kernel(self, key: str):
-            likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            likelihood = GaussianLikelihood()
             likelihood.eval()
             self.likelihoods[key] = likelihood
 
             _, parents = resolve_mechanism_key(key)
             active_dims = torch.LongTensor([self.node_to_dim_map[node] for node in parents])
-            kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RQKernel(active_dims=active_dims))
+            kernel = ScaleKernel(RQKernel(active_dims=active_dims))
             kernel.eval()
             self.kernels[key] = kernel
 
@@ -711,7 +713,7 @@ class SharedDataGaussianProcess(Mechanism):
         def forward(self, x, key: str):
             mean = self.mean_module(x)
             covar = self.kernels[key](x)
-            return gpytorch.distributions.MultivariateNormal(mean, covar)
+            return MultivariateNormal(mean, covar)
 
         def hyperparam_log_prior(self, key: str):
             log_prior = self.noise_var_prior.log_prob(self.likelihoods[key].noise) + \
@@ -779,7 +781,7 @@ class SharedDataGaussianProcess(Mechanism):
 
         self.eval()
 
-    def set_data(self, inputs: torch.Tensor, targets: torch.Tensor):
+    def set_data(self, inputs: Tensor, targets: Tensor):
         self._check_args(inputs, targets)
         self.gp.set_train_data(inputs, targets, strict=False)
 
@@ -816,7 +818,7 @@ class SharedDataGaussianProcess(Mechanism):
     def get_parameters(self, keys: List[str] = None):
         return self.gp.get_parameters(keys)
 
-    def forward(self, inputs: torch.Tensor, key: str, prior_mode=False):
+    def forward(self, inputs: Tensor, key: str, prior_mode=False):
         self._check_args(inputs)
         output_shape = (*inputs.shape[:-1], 1)
 
@@ -825,7 +827,7 @@ class SharedDataGaussianProcess(Mechanism):
             f_dist = self.gp(inputs, key=key)
         return f_dist.mean.view(output_shape)
 
-    def sample(self, inputs: torch.Tensor, key: str, prior_mode=False):
+    def sample(self, inputs: Tensor, key: str, prior_mode=False):
         self._check_args(inputs)
         output_shape = (*inputs.shape[:-1], 1)
 
@@ -835,7 +837,7 @@ class SharedDataGaussianProcess(Mechanism):
         y_dist = self.gp.likelihoods[key](f_dist)
         return y_dist.sample().view(output_shape)
 
-    def mll(self, inputs: torch.Tensor, targets: torch.Tensor, key: str, prior_mode=False, reduce=True):
+    def mll(self, inputs: Tensor, targets: Tensor, key: str, prior_mode=False, reduce=True):
         self._check_args(inputs, targets)
         output_shape = targets.shape[:-1]
 
@@ -851,7 +853,7 @@ class SharedDataGaussianProcess(Mechanism):
             return mlls.sum()
         return mlls
 
-    def expected_noise_entropy(self, key: str) -> torch.Tensor:
+    def expected_noise_entropy(self, key: str) -> Tensor:
         # use point estimate with the MAP variance
         self.activate(key)
         entropy = 0.5 * (2. * math.pi * self.gp.likelihoods[key].noise * math.e).log().squeeze()
@@ -885,10 +887,10 @@ class AdditiveSigmoids(Mechanism):
     Static mechanism for generating ground truth environments as suggested in Buhlmann, P., Peters, J., and Ernest, J.
     "CAM: Causal additive models, high-dimensional order search and penalized regression." Annals of Statistics, 2014.
     '''
-    noise: torch.Tensor
-    outscales: torch.Tensor
-    lengthscales: torch.Tensor
-    offsets: torch.Tensor
+    noise: Tensor
+    outscales: Tensor
+    lengthscales: Tensor
+    offsets: Tensor
 
     def __init__(self, in_size: int, cfg: AdditiveSigmoidsConfig = None, param_dict: Dict[str, Any] = None):
         super().__init__(in_size)
@@ -904,7 +906,7 @@ class AdditiveSigmoids(Mechanism):
             self.outscale_prior = dist.Gamma(self.cfg.outscale_concentration, self.cfg.outscale_rate)
             self.lscale_prior = dist.Uniform(self.cfg.lscale_lower, self.cfg.lscale_upper)
             self.offset_prior = dist.Uniform(self.cfg.offset_lower, self.cfg.offset_upper)
-            self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            self.likelihood = GaussianLikelihood()
 
             # initialize likelihood and parameters
             self.init_hyperparams()
@@ -918,7 +920,7 @@ class AdditiveSigmoids(Mechanism):
         self.lengthscales = self.lscale_prior.sample(torch.Size((self.in_size,)))
         self.offsets = self.offset_prior.sample(torch.Size((self.in_size,)))
 
-    def forward(self, inputs: torch.Tensor, prior_mode=False):
+    def forward(self, inputs: Tensor, prior_mode=False):
         self._check_args(inputs)
         output_shape = (*inputs.shape[:-1], 1)
 
@@ -929,7 +931,7 @@ class AdditiveSigmoids(Mechanism):
         assert outputs.shape == output_shape, print(outputs.shape)
         return outputs
 
-    def sample(self, inputs: torch.Tensor, prior_mode=False):
+    def sample(self, inputs: Tensor, prior_mode=False):
         self._check_args(inputs)
         output_shape = (*inputs.shape[:-1], 1)
 
@@ -937,7 +939,7 @@ class AdditiveSigmoids(Mechanism):
         y_dist = self.likelihood(means)
         return y_dist.sample().view(output_shape)
 
-    def mll(self, inputs: torch.Tensor, targets: torch.Tensor, reduce=True):
+    def mll(self, inputs: Tensor, targets: Tensor, reduce=True):
         means = self(inputs)
         y_dist = self.likelihood(means)
         mlls = y_dist.log_prob(targets).squeeze(-1)
