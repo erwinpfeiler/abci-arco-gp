@@ -543,7 +543,8 @@ class GaussianProcess(Mechanism):
 
     def init_as_static(self):
         # generate support points and sample training targets from the GP prior
-        num_train = self.cfg.num_support_points * self.in_size
+        sampling_factor = 1 if self.cfg.kernel == 'additive-rq' else self.in_size
+        num_train = self.cfg.num_support_points * sampling_factor
         spread = self.cfg.support_max - self.cfg.support_min
         train_x = spread * torch.rand((num_train, self.in_size)) + self.cfg.support_min
         self.eval()
