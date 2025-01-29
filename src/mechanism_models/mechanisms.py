@@ -6,7 +6,7 @@ import gpytorch
 import torch
 import torch.distributions as dist
 from gpytorch.distributions import MultivariateNormal
-from gpytorch.kernels import RQKernel, LinearKernel, ScaleKernel
+from gpytorch.kernels import RQKernel, LinearKernel, ScaleKernel, AdditiveStructureKernel
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.means import ZeroMean, ConstantMean
 from gpytorch.models import ExactGP
@@ -245,6 +245,105 @@ class GaussianRootNode(Mechanism):
 
 
 class GaussianProcess(Mechanism):
+    ##########################################################################
+    # Product RQ Kernel
+    class GaussianProcessAdditiveRQKernel(ExactGP):
+        posterior_noise: Tensor
+        posterior_outputscale: Tensor
+        posterior_lengthscale: Tensor
+        posterior_scale_mix: Tensor
+
+        def __init__(self, in_size: int, cfg: GaussianProcessConfig, param_dict: Dict[str, Any] = None):
+            assert in_size > 0, print(f'Invalid input dimensions {in_size}!')
+            likelihood = GaussianLikelihood()
+            super().__init__(None, None, likelihood)
+            self.in_size = in_size
+            self.cfg = cfg
+            self.mean_module = ZeroMean()
+            base_kernel = RQKernel(ard_num_dims=self.in_size)
+            self.kernel = ScaleKernel(AdditiveStructureKernel(base_kernel, self.in_size))
+
+            # init hp priors
+            # ATTENTION: do not name the HP priors "noise_prior", "outputscale_prior" or "lengthscale_prior"
+            self.noise_var_prior = dist.Gamma(cfg.noise_var_concentration, cfg.noise_var_rate)
+            self.outscale_prior = dist.Gamma(cfg.outscale_concentration, cfg.outscale_rate)
+            self.lscale_prior = dist.Gamma(cfg.lscale_concentration_multiplier, cfg.lscale_rate)
+            self.scale_mix_prior = dist.Gamma(cfg.scale_mix_concentration, cfg.scale_mix_rate)
+
+            if param_dict is not None:
+                self.load_param_dict(param_dict)
+            else:
+                # init kernel parameters
+                self.init_hyperparams()
+
+            self.posterior_hp = False
+            self.select_hyperparameters(posterior_hp=True)
+
+        def forward(self, x):
+            mean = self.mean_module(x)
+            covar = self.kernel(x)
+            return MultivariateNormal(mean, covar)
+
+        def hyperparam_log_prior(self):
+            log_prior = self.noise_var_prior.log_prob(self.likelihood.noise) + \
+                        self.outscale_prior.log_prob(self.kernel.outputscale) + \
+                        self.lscale_prior.log_prob(self.kernel.base_kernel.base_kernel.lengthscale).mean() + \
+                        self.scale_mix_prior.log_prob(self.kernel.base_kernel.base_kernel.alpha)
+            return log_prior.squeeze()
+
+        def init_hyperparams(self):
+            noise_var = self.noise_var_prior.sample()
+            self.posterior_noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
+            self.posterior_outputscale = self.outscale_prior.sample()
+            self.posterior_scale_mix = self.scale_mix_prior.sample()
+            if self.cfg.per_dim_lenghtscale:
+                self.posterior_lengthscale = self.lscale_prior.sample(Size((self.in_size,)))
+            else:
+                self.posterior_lengthscale = self.lscale_prior.sample(Size((1,))).expand(self.in_size)
+
+        def select_hyperparameters(self, posterior_hp: bool):
+            if posterior_hp:
+                if not self.posterior_hp:
+                    # load posterior HPs
+                    self.likelihood.noise = self.posterior_noise
+                    self.kernel.outputscale = self.posterior_outputscale
+                    self.kernel.base_kernel.base_kernel.lengthscale = self.posterior_lengthscale
+                    self.kernel.base_kernel.base_kernel.alpha = self.posterior_scale_mix
+                    self.posterior_hp = True
+            else:
+                # store posterior HPs if posterior HPs currently in use
+                if self.posterior_hp:
+                    self.posterior_noise = self.likelihood.noise.detach()
+                    self.posterior_outputscale = self.kernel.outputscale.detach()
+                    self.posterior_lengthscale = self.kernel.base_kernel.base_kernel.lengthscale.detach()
+                    self.posterior_scale_mix = self.kernel.base_kernel.base_kernel.alpha.detach()
+                    self.posterior_hp = False
+
+                # draw HPs from HP prior
+                self.likelihood.noise = self.noise_var_prior.sample()
+                self.kernel.outputscale = self.outscale_prior.sample()
+                self.kernel.base_kernel.base_kernel.alpha = self.scale_mix_prior.sample()
+                if self.cfg.per_dim_lenghtscale:
+                    self.kernel.base_kernel.base_kernel.lengthscale = self.lscale_prior.sample(Size((self.in_size,)))
+                else:
+                    self.kernel.base_kernel.base_kernel.lengthscale = self.lscale_prior.sample(Size((1,))).expand(
+                        self.in_size)
+
+        def param_dict(self) -> Dict[str, Any]:
+            params = {'in_size': self.in_size,
+                      'posterior_noise': self.posterior_noise,
+                      'posterior_outputscale': self.posterior_outputscale,
+                      'posterior_lengthscale': self.posterior_lengthscale,
+                      'posterior_scale_mix': self.posterior_scale_mix}
+            return params
+
+        def load_param_dict(self, param_dict):
+            self.in_size = param_dict['in_size']
+            self.posterior_noise = param_dict['posterior_noise'].float()
+            self.posterior_outputscale = param_dict['posterior_outputscale'].float()
+            self.posterior_lengthscale = param_dict['posterior_lengthscale'].float()
+            self.posterior_scale_mix = param_dict['posterior_scale_mix'].float()
+
     ##########################################################################
     # RQ Kernel GP model
     ##########################################################################
