@@ -16,7 +16,7 @@ ENV = 'BarabasiAlbert'
 DATA_SUBDIR = f'20_nodes_100_train'
 MODEL = 'abci-arco-gp'
 SIM_TOKEN = 'some-identifier'
-CONFIG = 'cfg-arco-k2.py'
+CONFIG = 'example-config.py'
 ##################################################
 
 ##################################################

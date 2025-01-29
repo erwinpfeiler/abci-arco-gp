@@ -63,12 +63,12 @@ class GaussianRootNodeConfig:
     mu_0: float = 0.
     kappa_0: float = 1.
     # generation setup
-    alpha_0: float = 5.
-    beta_0: float = 10.
+    # alpha_0: float = 5.
+    # beta_0: float = 10.
 
     # inference setup (normalised data)
-    # alpha_0: float = 10.
-    # beta_0: float = 10.
+    alpha_0: float = 10.
+    beta_0: float = 10.
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'mu_0': self.mu_0,
@@ -118,25 +118,18 @@ class AdditiveSigmoidsConfig:
 
 
 class GaussianProcessConfig:
+    # general setup
+    per_dim_lenghtscale: bool = True
+    kernel: str = 'rq'  # available: 'linear', 'rq', 'additive-rq'; not all types may be available for all GP classes
+
+    # setup for sampling ground-truth mechanisms
     num_support_points: int = 50
     support_min: float = -10.
     support_max: float = 10.
 
-    # generation setup
-    noise_var_concentration: float = 50.
-    noise_var_rate: float = 50.
-    outscale_concentration: float = 100.
-    outscale_rate: float = 10.
-    lscale_concentration_multiplier: float = 30.
-    lscale_rate: float = 30.
-    scale_mix_concentration: float = 20.
-    scale_mix_rate: float = 10.
-    offset_loc: float = 0.
-    offset_scale: float = 3.
-
-    # inference setup (normalised data)
-    # noise_var_concentration: float = 2.
-    # noise_var_rate: float = 8.
+    # hyper-prior params for ground-truth model generation
+    # noise_var_concentration: float = 50.
+    # noise_var_rate: float = 50.
     # outscale_concentration: float = 100.
     # outscale_rate: float = 10.
     # lscale_concentration_multiplier: float = 30.
@@ -144,10 +137,24 @@ class GaussianProcessConfig:
     # scale_mix_concentration: float = 20.
     # scale_mix_rate: float = 10.
     # offset_loc: float = 0.
-    # offset_scale: float = 0.5
+    # offset_scale: float = 3.
+
+    # hyper-prior params for inference (normalised data)
+    noise_var_concentration: float = 2.
+    noise_var_rate: float = 8.
+    outscale_concentration: float = 100.
+    outscale_rate: float = 10.
+    lscale_concentration_multiplier: float = 30.
+    lscale_rate: float = 30.
+    scale_mix_concentration: float = 20.
+    scale_mix_rate: float = 10.
+    offset_loc: float = 0.
+    offset_scale: float = 0.5
 
     def param_dict(self) -> Dict[str, Any]:
-        params = {'num_support_points': self.num_support_points,
+        params = {'per_dim_lenghtscale': self.per_dim_lenghtscale,
+                  'kernel': self.kernel,
+                  'num_support_points': self.num_support_points,
                   'support_min': self.support_min,
                   'support_max': self.support_max,
                   'noise_var_concentration': self.noise_var_concentration,
@@ -161,6 +168,8 @@ class GaussianProcessConfig:
         return params
 
     def load_param_dict(self, param_dict):
+        self.per_dim_lenghtscale = param_dict['per_dim_lenghtscale']
+        self.kernel = param_dict['kernel']
         self.num_support_points = param_dict['num_support_points']
         self.support_min = param_dict['support_min']
         self.support_max = param_dict['support_max']
@@ -177,9 +186,8 @@ class GaussianProcessConfig:
 class GPModelConfig:
     imll_mc_samples: int = 50  # number of ancestral mc samples to estimate an interventional mll
     opt_batch_size: int = 20  # maximum number of GP for which to update HP simulateniously to avoid out of mem
-    discard_threshold_gps: int = 25000  # max number of mechanisms to keep in model
-    discard_threshold_topo_orders: int = 10000  # max number of mechanisms to keep in model
-    linear: bool = False  # linear GP kernel
+    discard_threshold_gps: int = 70000  # max number of mechanisms to keep in model
+    discard_threshold_topo_orders: int = 30000  # max number of mechanisms to keep in model
 
     # gp hyperparam training
     num_steps: int = 100
@@ -192,7 +200,6 @@ class GPModelConfig:
     def param_dict(self) -> Dict[str, Any]:
         params = {'imll_mc_samples': self.imll_mc_samples,
                   'opt_batch_size': self.opt_batch_size,
-                  'linear': self.linear,
                   'num_steps': self.num_steps,
                   'log_interval': self.log_interval,
                   'lr': self.lr,
@@ -204,7 +211,6 @@ class GPModelConfig:
     def load_param_dict(self, param_dict):
         self.imll_mc_samples = param_dict['imll_mc_samples']
         self.opt_batch_size = param_dict['opt_batch_size']
-        self.linear = param_dict['linear']
         self.num_steps = param_dict['num_steps']
         self.log_interval = param_dict['log_interval']
         self.lr = param_dict['lr']
@@ -256,7 +262,7 @@ class ABCIFixedGraphGPConfig(ABCIBaseConfig):
     num_initial_obs_samples: int = 3
 
     # eval parameters
-    compute_distributional_stats: bool = True
+    compute_distributional_stats: bool = False
     num_samples_per_graph = 10000
 
     @classmethod
@@ -406,7 +412,7 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
     num_initial_obs_samples: int = 200
 
     # eval parameters
-    compute_distributional_stats: bool = True
+    compute_distributional_stats: bool = False
     num_samples_per_graph = 10
 
     # training parameters
@@ -542,7 +548,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     # eval parameters
     num_mc_cos: int = 100
     num_mc_graphs: int = 10
-    compute_distributional_stats: bool = True
+    compute_distributional_stats: bool = False
     num_samples_per_graph = 10
 
     # training parameters
@@ -640,15 +646,14 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
 ##############################################################################################
 class EnvironmentConfig:
     id_length: int = 8
-    intervention_bounds: Tuple[float, float] = (-3., 3.)
+    intervention_bounds: Tuple[float, float] = (-1., 1.)
     mechanism_model: str = 'gp-model'
-    linear: bool = False
     normalise_data: bool = True
     frac_non_intervenable_nodes: float = None
     non_intervenable_nodes: set = None
 
     generate_static_obs_dataset: bool = True
-    num_observational_train_samples: int = 200
+    num_observational_train_samples: int = 100
     num_observational_test_samples: int = 200
 
     generate_static_intr_dataset: bool = False
@@ -671,7 +676,6 @@ class EnvironmentConfig:
         params = {'id_length': self.id_length,
                   'intervention_bounds': self.intervention_bounds,
                   'mechanism_model': self.mechanism_model,
-                  'linear': self.linear,
                   'normalise_data': self.normalise_data,
                   'frac_non_intervenable_nodes': self.frac_non_intervenable_nodes,
                   'non_intervenable_nodes': self.non_intervenable_nodes,
@@ -696,7 +700,6 @@ class EnvironmentConfig:
         self.id_length = param_dict['id_length']
         self.intervention_bounds = param_dict['intervention_bounds']
         self.mechanism_model = param_dict['mechanism_model']
-        self.linear = param_dict['linear']
         self.normalise_data = param_dict['normalise_data']
         self.frac_non_intervenable_nodes = param_dict['frac_non_intervenable_nodes']
         self.non_intervenable_nodes = param_dict['non_intervenable_nodes']
