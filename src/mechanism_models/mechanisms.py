@@ -52,9 +52,10 @@ class Mechanism(Module):
         super().__init__()
         self.in_size = in_size
 
-    def _check_args(self, inputs: Tensor = None, targets: Tensor = None):
+    def _check_args(self, inputs: Tensor = None, targets: Tensor = None) -> Tuple[Tensor, Tensor, Tensor]:
         """
-        Checks the generic argument shapes (inputs and targets) and their compatibility.
+        Checks arguments (inputs and targets) shapes and compatibility. Re-shapes inputs to shape
+        (num_batches, num_samples_per_batch, num_parents) and targets to shape (num_batches, num_samples_per_batch).
 
         Parameters
         ----------
@@ -63,14 +64,21 @@ class Mechanism(Module):
         targets : Tensor
             Mechanism targets, e.g., for evaluating the marginal log-likelihood.
         """
+        batch_shape = None
         if inputs is not None:
-            assert inputs.dim() >= 2 and inputs.shape[-1] == self.in_size, print(
-                f'Ill-shaped inputs: {inputs.shape}')
+            in_size = self.in_size if self.in_size > 0 else 1
+            assert 2 <= inputs.dim() <= 3 and inputs.shape[-1] == in_size, print(f'Ill-shaped inputs: {inputs.shape}')
+            inputs = inputs.unsqueeze(0) if inputs.dim() == 2 else inputs
+            batch_shape = inputs.shape[:-1]
         if targets is not None:
-            assert targets.dim() >= 1, print(f'Ill-shaped targets: {targets.shape}')
+            assert 1 <= targets.dim() <= 2, print(f'Ill-shaped targets: {targets.shape}')
+            targets = targets.unsqueeze(0) if targets.dim() == 1 else targets
+            batch_shape = targets.shape
         if targets is not None and inputs is not None:
             assert inputs.shape[:-1] == targets.shape, print(f'Batch size mismatch: {inputs.shape} vs.'
                                                              f' {targets.shape}')
+
+        return inputs, targets, batch_shape
 
     def forward(self, inputs: Tensor, prior_mode: bool = False):
         """
@@ -120,11 +128,12 @@ class GaussianRootNode(Mechanism):
                 self.init_as_static()
 
     def compute_posterior_params(self, targets: Tensor, prior_mode=False):
-        self._check_args(targets=targets)
+        _, targets, batch_shape = self._check_args(targets=targets)
 
         full_targets = targets
         if not prior_mode and self.train_targets is not None:
-            full_targets = torch.cat((targets, self.train_targets.expand(*targets.shape[:-1], -1)), dim=-1)
+            num_batches = batch_shape[0]
+            full_targets = torch.cat((targets, self.train_targets.expand(num_batches, -1)), dim=-1)
 
         n = full_targets.shape[-1]
         empirical_means = full_targets.mean(dim=-1)
@@ -142,14 +151,14 @@ class GaussianRootNode(Mechanism):
         self.mu_0 = dist.Normal(0., (self.kappa_0 * self.lam_0).pow(-0.5)).sample()
 
     def set_data(self, inputs: Tensor, targets: Tensor):
-        self._check_args(targets=targets)
-        assert targets.dim() == 1, print('Can only work with one set of posterior params!')
+        _, targets, _ = self._check_args(targets=targets)
+        assert targets.shape[0] == 1, print('Can only work with one batch of posterior params!')
         self.train_targets = targets
         self.mu_n, self.kappa_n, self.alpha_n, self.beta_n = self.compute_posterior_params(targets, prior_mode=True)
 
     def forward(self, inputs: Tensor, prior_mode=False):
-        assert inputs.dim() >= 2
-        output_shape = (*inputs.shape[:-1], 1)
+        _, _, batch_shape = self._check_args(inputs)
+        output_shape = batch_shape + (1,)
 
         if self.static or prior_mode:
             return self.mu_0 * torch.ones(output_shape)
@@ -157,13 +166,13 @@ class GaussianRootNode(Mechanism):
         return self.mu_n * torch.ones(output_shape)
 
     def sample(self, inputs: Tensor, prior_mode=False):
-        assert inputs.dim() >= 2
-        output_shape = (*inputs.shape[:-1], 1)
+        _, _, batch_shape = self._check_args(inputs)
+        output_shape = batch_shape + (1,)
 
         if self.static:
             # sample from true distribution
             y_dist = dist.Normal(self.mu_0, self.lam_0.pow(-0.5))
-            return y_dist.sample(Size(output_shape))
+            return y_dist.sample(output_shape)
 
         # sample from marginal likelihood
         if prior_mode:
@@ -171,16 +180,16 @@ class GaussianRootNode(Mechanism):
         else:
             mu_n, kappa_n, alpha_n, beta_n = (self.mu_n, self.kappa_n, self.alpha_n, self.beta_n)
 
-        lambdas = dist.Gamma(alpha_n, beta_n).sample(Size(output_shape[:-2]))
+        lambdas = dist.Gamma(alpha_n, beta_n).sample(output_shape[:-2])
         mus = dist.Normal(mu_n.expand_as(lambdas), (kappa_n * lambdas).pow(-0.5)).sample()
 
         y_dist = dist.Normal(mus, lambdas.pow(-0.5))
-        samples = y_dist.sample(Size(output_shape[-2:-1])).unsqueeze(-1).transpose(0, -1).view(output_shape)
+        samples = y_dist.sample(output_shape[-2:-1]).unsqueeze(-1).transpose(0, -1).view(output_shape)
         return samples
 
     def mll(self, inputs: Tensor, targets: Tensor, prior_mode=False, reduce=True):
-        self._check_args(targets=targets)
-        output_shape = targets.shape[:-1]
+        _, targets, batch_shape = self._check_args(targets=targets)
+        output_shape = batch_shape[:-1]
         if self.static:
             # evaluate true log-likelihood
             y_dist = dist.Normal(self.mu_0, self.lam_0.pow(-0.5))
@@ -557,12 +566,12 @@ class GaussianProcess(Mechanism):
         self.set_data(train_x, train_y)
 
     def set_data(self, inputs: Tensor, targets: Tensor):
-        self._check_args(inputs, targets)
+        inputs, targets, _ = self._check_args(inputs, targets)
         self.gp.set_train_data(inputs, targets, strict=False)
 
     def forward(self, inputs: Tensor, prior_mode=False):
-        self._check_args(inputs)
-        output_shape = (*inputs.shape[:-1], 1)
+        inputs, _, batch_shape = self._check_args(inputs)
+        output_shape = batch_shape + (1,)
 
         self.eval()
         with gpytorch.settings.prior_mode(prior_mode):
@@ -570,8 +579,8 @@ class GaussianProcess(Mechanism):
         return f_dist.mean.view(output_shape)
 
     def sample(self, inputs: Tensor, prior_mode=False):
-        self._check_args(inputs)
-        output_shape = (*inputs.shape[:-1], 1)
+        inputs, _, batch_shape = self._check_args(inputs)
+        output_shape = batch_shape + (1,)
 
         self.eval()
         with gpytorch.settings.prior_mode(prior_mode):
@@ -580,8 +589,8 @@ class GaussianProcess(Mechanism):
         return y_dist.sample().view(output_shape)
 
     def mll(self, inputs: Tensor, targets: Tensor, prior_mode=False, reduce=True):
-        self._check_args(inputs, targets)
-        output_shape = targets.shape[:-1]
+        inputs, targets, batch_shape = self._check_args(inputs, targets)
+        output_shape = batch_shape[:-1]
         with gpytorch.settings.prior_mode(prior_mode):
             f_dist = self.gp(inputs)
 
@@ -898,7 +907,7 @@ class SharedDataGaussianProcess(Mechanism):
         self.eval()
 
     def set_data(self, inputs: Tensor, targets: Tensor):
-        self._check_args(inputs, targets)
+        inputs, targets, _ = self._check_args(inputs, targets)
         self.gp.set_train_data(inputs, targets, strict=False)
 
     def init_kernel(self, key: str):
@@ -934,8 +943,8 @@ class SharedDataGaussianProcess(Mechanism):
         return self.gp.get_parameters(keys)
 
     def forward(self, inputs: Tensor, key: str, prior_mode=False):
-        self._check_args(inputs)
-        output_shape = (*inputs.shape[:-1], 1)
+        inputs, _, batch_shape = self._check_args(inputs)
+        output_shape = batch_shape + (1,)
 
         self.activate(key)
         with gpytorch.settings.prior_mode(prior_mode):
@@ -943,8 +952,8 @@ class SharedDataGaussianProcess(Mechanism):
         return f_dist.mean.view(output_shape)
 
     def sample(self, inputs: Tensor, key: str, prior_mode=False):
-        self._check_args(inputs)
-        output_shape = (*inputs.shape[:-1], 1)
+        inputs, _, batch_shape = self._check_args(inputs)
+        output_shape = batch_shape + (1,)
 
         self.activate(key)
         with gpytorch.settings.prior_mode(prior_mode):
@@ -953,9 +962,8 @@ class SharedDataGaussianProcess(Mechanism):
         return y_dist.sample().view(output_shape)
 
     def mll(self, inputs: Tensor, targets: Tensor, key: str, prior_mode=False, reduce=True):
-        self._check_args(inputs, targets)
-        output_shape = targets.shape[:-1]
-
+        inputs, targets, batch_shape = self._check_args(inputs, targets)
+        output_shape = batch_shape[:-1]
         self.activate(key)
         with gpytorch.settings.prior_mode(prior_mode):
             f_dist = self.gp(inputs, key=key)
@@ -1036,8 +1044,8 @@ class AdditiveSigmoids(Mechanism):
         self.offsets = self.offset_prior.sample(Size((self.in_size,)))
 
     def forward(self, inputs: Tensor, prior_mode=False):
-        self._check_args(inputs)
-        output_shape = (*inputs.shape[:-1], 1)
+        inputs, _, batch_shape = self._check_args(inputs)
+        output_shape = batch_shape + (1,)
 
         self.eval()
         tmp = self.lengthscales * (inputs + self.offsets)
@@ -1047,17 +1055,21 @@ class AdditiveSigmoids(Mechanism):
         return outputs
 
     def sample(self, inputs: Tensor, prior_mode=False):
-        self._check_args(inputs)
-        output_shape = (*inputs.shape[:-1], 1)
+        inputs, _, batch_shape = self._check_args(inputs)
+        output_shape = batch_shape + (1,)
 
         means = self(inputs)
         y_dist = self.likelihood(means)
         return y_dist.sample().view(output_shape)
 
     def mll(self, inputs: Tensor, targets: Tensor, reduce=True):
+        inputs, targets, batch_shape = self._check_args(inputs, targets)
+        output_shape = batch_shape[:-1]
+
         means = self(inputs)
         y_dist = self.likelihood(means)
         mlls = y_dist.log_prob(targets).squeeze(-1)
+        assert mlls.shape == output_shape, print(f'Invalid shape {mlls.shape} vs. {output_shape}!')
 
         if reduce:
             return mlls.sum()
