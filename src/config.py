@@ -119,7 +119,8 @@ class AdditiveSigmoidsConfig:
 
 class GaussianProcessConfig:
     # general setup
-    per_dim_lenghtscale: bool = False
+    per_dim_lenghtscale: bool = True
+    kernel: str = 'rq'  # available: 'linear', 'rq', 'additive-rq'; not all types may be available for all GP classes
 
     # setup for sampling ground-truth mechanisms
     num_support_points: int = 50
@@ -152,6 +153,7 @@ class GaussianProcessConfig:
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'per_dim_lenghtscale': self.per_dim_lenghtscale,
+                  'kernel': self.kernel,
                   'num_support_points': self.num_support_points,
                   'support_min': self.support_min,
                   'support_max': self.support_max,
@@ -167,6 +169,7 @@ class GaussianProcessConfig:
 
     def load_param_dict(self, param_dict):
         self.per_dim_lenghtscale = param_dict['per_dim_lenghtscale']
+        self.kernel = param_dict['kernel']
         self.num_support_points = param_dict['num_support_points']
         self.support_min = param_dict['support_min']
         self.support_max = param_dict['support_max']
@@ -185,7 +188,6 @@ class GPModelConfig:
     opt_batch_size: int = 20  # maximum number of GP for which to update HP simulateniously to avoid out of mem
     discard_threshold_gps: int = 70000  # max number of mechanisms to keep in model
     discard_threshold_topo_orders: int = 30000  # max number of mechanisms to keep in model
-    linear: bool = False  # linear GP kernel
 
     # gp hyperparam training
     num_steps: int = 100
@@ -198,7 +200,6 @@ class GPModelConfig:
     def param_dict(self) -> Dict[str, Any]:
         params = {'imll_mc_samples': self.imll_mc_samples,
                   'opt_batch_size': self.opt_batch_size,
-                  'linear': self.linear,
                   'num_steps': self.num_steps,
                   'log_interval': self.log_interval,
                   'lr': self.lr,
@@ -210,7 +211,6 @@ class GPModelConfig:
     def load_param_dict(self, param_dict):
         self.imll_mc_samples = param_dict['imll_mc_samples']
         self.opt_batch_size = param_dict['opt_batch_size']
-        self.linear = param_dict['linear']
         self.num_steps = param_dict['num_steps']
         self.log_interval = param_dict['log_interval']
         self.lr = param_dict['lr']
@@ -262,7 +262,7 @@ class ABCIFixedGraphGPConfig(ABCIBaseConfig):
     num_initial_obs_samples: int = 3
 
     # eval parameters
-    compute_distributional_stats: bool = True
+    compute_distributional_stats: bool = False
     num_samples_per_graph = 10000
 
     @classmethod
@@ -412,7 +412,7 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
     num_initial_obs_samples: int = 200
 
     # eval parameters
-    compute_distributional_stats: bool = True
+    compute_distributional_stats: bool = False
     num_samples_per_graph = 10
 
     # training parameters
@@ -548,7 +548,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     # eval parameters
     num_mc_cos: int = 100
     num_mc_graphs: int = 10
-    compute_distributional_stats: bool = True
+    compute_distributional_stats: bool = False
     num_samples_per_graph = 10
 
     # training parameters
@@ -648,7 +648,6 @@ class EnvironmentConfig:
     id_length: int = 8
     intervention_bounds: Tuple[float, float] = (-1., 1.)
     mechanism_model: str = 'gp-model'
-    linear: bool = False
     normalise_data: bool = True
     frac_non_intervenable_nodes: float = None
     non_intervenable_nodes: set = None
@@ -677,7 +676,6 @@ class EnvironmentConfig:
         params = {'id_length': self.id_length,
                   'intervention_bounds': self.intervention_bounds,
                   'mechanism_model': self.mechanism_model,
-                  'linear': self.linear,
                   'normalise_data': self.normalise_data,
                   'frac_non_intervenable_nodes': self.frac_non_intervenable_nodes,
                   'non_intervenable_nodes': self.non_intervenable_nodes,
@@ -702,7 +700,6 @@ class EnvironmentConfig:
         self.id_length = param_dict['id_length']
         self.intervention_bounds = param_dict['intervention_bounds']
         self.mechanism_model = param_dict['mechanism_model']
-        self.linear = param_dict['linear']
         self.normalise_data = param_dict['normalise_data']
         self.frac_non_intervenable_nodes = param_dict['frac_non_intervenable_nodes']
         self.non_intervenable_nodes = param_dict['non_intervenable_nodes']

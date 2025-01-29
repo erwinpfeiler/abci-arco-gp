@@ -41,7 +41,7 @@ class SharedDataGaussianProcessModel:
             self.node_labels = sorted(list(set(node_labels)))
             num_nodes = len(self.node_labels)
             self.node_to_dim_map = {node: idx for idx, node in enumerate(self.node_labels)}
-            self.gps = {n: SharedDataGaussianProcess(num_nodes, self.node_to_dim_map, self.cfg.linear) for n in
+            self.gps = {n: SharedDataGaussianProcess(num_nodes, self.node_to_dim_map) for n in
                         self.node_labels}
             self.root_mechs = {n: GaussianRootNode() for n in self.node_labels}
             self.mechanism_update_times = {get_mechanism_key(node, []): 0 for node in self.node_labels}

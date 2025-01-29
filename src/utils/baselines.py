@@ -50,8 +50,7 @@ def graph_expectation(graphs: torch.Tensor, func: Callable) -> torch.Tensor:
 
 
 class GPRegressor:
-    def __init__(self, linear: bool = False):
-        self.linear = linear
+    def __init__(self):
         self.gp = None
 
     def fit(self, inputs: torch.Tensor, targets: torch.Tensor):
@@ -60,12 +59,12 @@ class GPRegressor:
         assert inputs.dim() == 2 and targets.dim() == 1 and inputs.shape[0] == targets.numel()
         num_samples, num_parents = inputs.shape
 
-        cfg = GPModelConfig()
-        self.gp = GaussianProcess(num_parents, linear=self.linear)
+        self.gp = GaussianProcess(num_parents)
         self.gp.set_data(inputs, targets)
         self.gp.train()
 
         # fit GP hyperparameters
+        cfg = GPModelConfig()
         optimizer = torch.optim.RMSprop(self.gp.parameters(), lr=cfg.lr)
         losses = []
         for i in range(cfg.num_steps):
@@ -162,10 +161,8 @@ class Baseline:
             self.graphs = torch.tensor(model.causal_matrix).unsqueeze(0)
             cpdag_prediction = True
         elif self.method == 'resit':
-            if self.env.cfg.linear:
-                print('RESIT: using linear GP regressor.')
             torch.set_default_dtype(torch.float32)
-            model = RESIT(regressor=GPRegressor(linear=self.env.cfg.linear))
+            model = RESIT(regressor=GPRegressor())
             model.fit(data)
             self.graphs = torch.tensor(model.adjacency_matrix_).unsqueeze(0)
         else:

@@ -140,7 +140,7 @@ class Environment:
     def create_mechanism(self, num_parents: int):
         if self.cfg.mechanism_model == 'gp-model':
             if num_parents > 0:
-                return GaussianProcess(num_parents, static=True, linear=self.cfg.linear)
+                return GaussianProcess(num_parents, static=True)
             else:
                 return GaussianRootNode(static=True)
         elif self.cfg.mechanism_model == 'additive-sigmoids':

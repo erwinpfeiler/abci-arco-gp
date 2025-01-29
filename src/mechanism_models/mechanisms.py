@@ -246,7 +246,7 @@ class GaussianRootNode(Mechanism):
 
 class GaussianProcess(Mechanism):
     ##########################################################################
-    # Product RQ Kernel
+    # Additive RQ Kernel
     class GaussianProcessAdditiveRQKernel(ExactGP):
         posterior_noise: Tensor
         posterior_outputscale: Tensor
@@ -345,8 +345,7 @@ class GaussianProcess(Mechanism):
             self.posterior_scale_mix = param_dict['posterior_scale_mix'].float()
 
     ##########################################################################
-    # RQ Kernel GP model
-    ##########################################################################
+    # RQ Kernel
     class GaussianProcessRQKernel(ExactGP):
         posterior_noise: Tensor
         posterior_outputscale: Tensor
@@ -440,8 +439,7 @@ class GaussianProcess(Mechanism):
             self.posterior_scale_mix = param_dict['posterior_scale_mix'].float()
 
     ##########################################################################
-    # Linear GP Model
-    ##########################################################################
+    # Linear Kernel
     class GaussianProcessLinearKernel(ExactGP):
         posterior_noise: Tensor
         posterior_outputscale: Tensor
@@ -520,7 +518,7 @@ class GaussianProcess(Mechanism):
     ##########################################################################
     # Main-class functions
     ##########################################################################
-    def __init__(self, in_size: int, static=False, linear=False, cfg: GaussianProcessConfig = None,
+    def __init__(self, in_size: int, static=False, cfg: GaussianProcessConfig = None,
                  param_dict: Dict[str, Any] = None):
         super().__init__(in_size)
         if param_dict is not None:
@@ -530,11 +528,14 @@ class GaussianProcess(Mechanism):
             self.cfg = GaussianProcessConfig() if cfg is None else cfg
 
             # initialize likelihood and gp model
-            self.linear = linear
-            if linear:
+            if self.cfg.kernel == 'linear':
                 self.gp = GaussianProcess.GaussianProcessLinearKernel(self.cfg)
-            else:
+            elif self.cfg.kernel == 'rq':
                 self.gp = GaussianProcess.GaussianProcessRQKernel(in_size, self.cfg)
+            elif self.cfg.kernel == 'additive-rq':
+                self.gp = GaussianProcess.GaussianProcessAdditiveRQKernel(in_size, self.cfg)
+            else:
+                raise NotImplementedError
 
             self.static = static
             if static:
@@ -607,7 +608,6 @@ class GaussianProcess(Mechanism):
         gp_param_dict = self.gp.param_dict()
         params = {'in_size': self.in_size,
                   'static': self.static,
-                  'linear': self.linear,
                   'gp_param_dict': gp_param_dict,
                   'cfg_param_dict': self.cfg.param_dict()}
 
@@ -621,13 +621,17 @@ class GaussianProcess(Mechanism):
         self.cfg.load_param_dict(param_dict['cfg_param_dict'])
         self.in_size = param_dict['in_size']
         self.static = param_dict['static']
-        self.linear = param_dict['linear']
 
-        if self.linear:
+        if self.cfg.kernel == 'linear':
             self.gp = GaussianProcess.GaussianProcessLinearKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
-        else:
+        elif self.cfg.kernel == 'rq':
             self.gp = GaussianProcess.GaussianProcessRQKernel(self.in_size, self.cfg,
                                                               param_dict=param_dict['gp_param_dict'])
+        elif self.cfg.kernel == 'additive-rq':
+            self.gp = GaussianProcess.GaussianProcessAdditiveRQKernel(self.in_size, self.cfg,
+                                                                      param_dict=param_dict['gp_param_dict'])
+        else:
+            raise NotImplementedError
 
         if self.static:
             train_inputs = param_dict['train_inputs'][0].float()
@@ -637,7 +641,7 @@ class GaussianProcess(Mechanism):
 
 class SharedDataGaussianProcess(Mechanism):
     ##########################################################################
-    # Shared-data GP Linear Kernel Model
+    # Shared-data GP Linear Kernel
     ##########################################################################
     class SharedDataGPLinearKernel(ExactGP):
         def __init__(self, cfg: GaussianProcessConfig, node_to_dim_map: Dict[str, int] = None,
@@ -871,8 +875,8 @@ class SharedDataGaussianProcess(Mechanism):
     ##########################################################################
     # Main-class functions
     ##########################################################################
-    def __init__(self, in_size: int, node_to_dim_map: Dict[str, int] = None, linear=False,
-                 cfg: GaussianProcessConfig = None, param_dict: Dict[str, Any] = None):
+    def __init__(self, in_size: int, node_to_dim_map: Dict[str, int] = None, cfg: GaussianProcessConfig = None,
+                 param_dict: Dict[str, Any] = None):
         assert node_to_dim_map is not None or param_dict is not None
         super().__init__(in_size)
 
@@ -883,11 +887,12 @@ class SharedDataGaussianProcess(Mechanism):
             self.cfg = GaussianProcessConfig() if cfg is None else cfg
 
             # initialize likelihood and gp model
-            self.linear = linear
-            if self.linear:
+            if self.cfg.kernel == 'linear':
                 self.gp = SharedDataGaussianProcess.SharedDataGPLinearKernel(self.cfg, node_to_dim_map)
-            else:
+            elif self.cfg.kernel == 'rq':
                 self.gp = SharedDataGaussianProcess.SharedDataGPRQKernel(self.cfg, node_to_dim_map)
+            else:
+                raise NotImplementedError
 
         self.eval()
 
@@ -971,7 +976,6 @@ class SharedDataGaussianProcess(Mechanism):
     def param_dict(self) -> Dict[str, Any]:
         gp_param_dict = self.gp.param_dict()
         params = {'in_size': self.in_size,
-                  'linear': self.linear,
                   'gp_param_dict': gp_param_dict,
                   'cfg_param_dict': self.cfg.param_dict()}
         return params
@@ -981,14 +985,15 @@ class SharedDataGaussianProcess(Mechanism):
         self.cfg.load_param_dict(param_dict['cfg_param_dict'])
 
         self.in_size = param_dict['in_size']
-        self.linear = param_dict['linear']
 
         # initialize likelihood and gp model
-        if self.linear:
+        if self.cfg.kernel == 'linear':
             self.gp = SharedDataGaussianProcess.SharedDataGPLinearKernel(self.cfg,
                                                                          param_dict=param_dict['gp_param_dict'])
-        else:
+        elif self.cfg.kernel == 'rq':
             self.gp = SharedDataGaussianProcess.SharedDataGPRQKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
+        else:
+            raise NotImplementedError
 
 
 class AdditiveSigmoids(Mechanism):

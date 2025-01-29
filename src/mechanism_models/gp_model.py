@@ -282,7 +282,7 @@ class GaussianProcessModel:
 
     def create_mechanism(self, num_parents: int, param_dict: Dict[str, Any] = None) -> Mechanism:
         if num_parents > 0:
-            return GaussianProcess(num_parents, linear=self.cfg.linear, param_dict=param_dict)
+            return GaussianProcess(num_parents, param_dict=param_dict)
         else:
             return GaussianRootNode(param_dict=param_dict)
 
