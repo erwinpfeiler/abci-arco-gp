@@ -245,9 +245,8 @@ class Baseline:
             node_label_to_id_dict = {node: i for i, node in enumerate(self.env.node_labels)}
 
             if self.env.interventional_test_data is not None:
-                print(f'Computing distributional metrics on interventional test data...')
+                print(f'Computing distributional metrics on interventional test data...', flush=True)
                 mean_errors = []
-                mmds = []
                 with torch.no_grad():
                     for eidx, exp in enumerate(self.env.interventional_test_data):
                         print(f'Computing metrics for intervention {eidx}/{len(self.env.interventional_test_data)}')

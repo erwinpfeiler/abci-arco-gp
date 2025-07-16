@@ -84,8 +84,7 @@ class ABCIFixedGraphGP(ABCIBase):
 
             # update model
             print(f'Updating model...', flush=True)
-            if self.cfg.inference_mode == 'joint':
-                self.mechanism_model.update_gp_hyperparameters(self.experiments)
+            self.mechanism_model.update_gp_hyperparameters(self.experiments)
 
             # save model checkpoints
             if (epoch + 1) % self.cfg.checkpoint_interval == 0 or epoch == self.cfg.num_experiments - 1:
@@ -161,7 +160,7 @@ class ABCIFixedGraphGP(ABCIBase):
 
         if self.cfg.compute_distributional_stats:
             if self.env.interventional_test_data is not None:
-                print(f'Computing distributional metrics on interventional test data...')
+                print(f'Computing distributional metrics on interventional test data...', flush=True)
                 mean_errors = []
                 mmds = []
                 with torch.no_grad():

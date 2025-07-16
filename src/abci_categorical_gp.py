@@ -123,8 +123,7 @@ class ABCICategoricalGP(ABCIBase):
 
             # update model
             print(f'Updating model...', flush=True)
-            if self.cfg.inference_mode == 'joint':
-                self.mechanism_model.update_gp_hyperparameters(self.experiments)
+            self.mechanism_model.update_gp_hyperparameters(self.experiments)
 
             self.graph_posterior = self.compute_graph_posterior(self.experiments, use_cache=True)
 
@@ -173,9 +172,9 @@ class ABCICategoricalGP(ABCIBase):
         with torch.no_grad():
             for graph in posterior.graphs:
                 mll = self.mechanism_model.mll(experiments, graph, prior_mode=True, use_cache=use_cache).squeeze()
-                log_prob = mll + self.graph_prior.log_prob(graph)
-                # if self.cfg.inference_mode == 'joint':
-                #     log_prob += self.mechanism_model.log_hp_prior(graph)
+                log_prob = self.mechanism_model.log_hp_prior(graph)
+                log_prob += mll + self.graph_prior.log_prob(graph)
+
                 posterior.set_log_prob(log_prob, graph)
 
             posterior.normalize()

@@ -1,13 +1,6 @@
 from typing import List, Tuple, Dict, Any, Optional
 
-import torch
-
 from src.environments.experiment import InterventionalDistributionsQuery
-
-# global params
-use_gpu: bool = False
-if use_gpu and torch.cuda.is_available():
-    torch.set_default_device('cuda')
 
 
 ##############################################################################################
@@ -249,7 +242,6 @@ class ABCIFixedGraphGPConfig(ABCIBaseConfig):
     # general config
     policy: str = 'static-obs-dataset'
     num_workers: int = 1
-    inference_mode: str = 'joint'  # 'joint' and 'graph_marginal' available
 
     # run config
     checkpoint_interval: int = 10
@@ -274,12 +266,10 @@ class ABCIFixedGraphGPConfig(ABCIBaseConfig):
         if param_dict is not None:
             self.load_param_dict(param_dict)
         super().__init__()
-        assert self.inference_mode in {'joint', 'graph_marginal'}
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'policy': self.policy,
                   'num_workers': self.num_workers,
-                  'inference_mode': self.inference_mode,
                   'checkpoint_interval': self.checkpoint_interval,
                   'output_dir': self.output_dir,
                   'model_name': self.model_name,
@@ -295,7 +285,6 @@ class ABCIFixedGraphGPConfig(ABCIBaseConfig):
     def load_param_dict(self, param_dict):
         self.policy = param_dict['policy']
         self.num_workers = param_dict['num_workers']
-        self.inference_mode = param_dict['inference_mode']
         self.checkpoint_interval = param_dict['checkpoint_interval']
         self.output_dir = param_dict['output_dir']
         self.model_name = param_dict['model_name']
@@ -312,7 +301,6 @@ class ABCICategoricalGPConfig(ABCIBaseConfig):
     # general config
     policy: str = 'observational'
     num_workers: int = 1
-    inference_mode: str = 'joint'  # 'joint' and 'graph_marginal' available
 
     # experimental design
     opt_strategy: str = 'gp-ucb'
@@ -341,12 +329,10 @@ class ABCICategoricalGPConfig(ABCIBaseConfig):
         if param_dict is not None:
             self.load_param_dict(param_dict)
         super().__init__()
-        assert self.inference_mode in {'joint', 'graph_marginal'}
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'policy': self.policy,
                   'num_workers': self.num_workers,
-                  'inference_mode': self.inference_mode,
                   'opt_strategy': self.opt_strategy,
                   'num_exp_per_graph': self.num_exp_per_graph,
                   'num_mc_queries': self.num_mc_queries,
@@ -366,7 +352,6 @@ class ABCICategoricalGPConfig(ABCIBaseConfig):
     def load_param_dict(self, param_dict):
         self.policy = param_dict['policy']
         self.num_workers = param_dict['num_workers']
-        self.inference_mode = param_dict['inference_mode']
         self.opt_strategy = param_dict['opt_strategy']
         self.num_exp_per_graph = param_dict['num_exp_per_graph']
         self.num_mc_queries = param_dict['num_mc_queries']
@@ -386,7 +371,6 @@ class ABCICategoricalGPConfig(ABCIBaseConfig):
 class ABCIDiBSGPConfig(ABCIBaseConfig):
     # general config
     policy: str = 'static-obs-dataset'
-    inference_mode: str = 'joint'  # 'joint' and 'particle_marginal' available
     num_workers: int = 1
     dibs_plus: bool = True
     num_particles: int = 10
@@ -442,11 +426,9 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
         if param_dict is not None:
             self.load_param_dict(param_dict)
         super().__init__()
-        assert self.inference_mode in {'joint', 'particle_marginal'}
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'policy': self.policy,
-                  'inference_mode': self.inference_mode,
                   'num_workers': self.num_workers,
                   'dibs_plus': self.dibs_plus,
                   'num_particles': self.num_particles,
@@ -488,7 +470,6 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
 
     def load_param_dict(self, param_dict):
         self.policy = param_dict['policy']
-        self.inference_mode = param_dict['inference_mode']
         self.num_workers = param_dict['num_workers']
         self.dibs_plus = param_dict['dibs_plus']
         self.num_particles = param_dict['num_particles']
@@ -531,7 +512,6 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
 class ABCIArCOGPConfig(ABCIBaseConfig):
     # general config
     policy: str = 'static-obs-dataset'
-    inference_mode: str = 'joint'  # 'joint' and 'no_gp_hps' available
     num_workers: int = 1
     max_ps_size: int = 2
 
@@ -572,11 +552,9 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
         if param_dict is not None:
             self.load_param_dict(param_dict)
         super().__init__()
-        assert self.inference_mode in {'joint', 'no-gp-hps'}
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'policy': self.policy,
-                  'inference_mode': self.inference_mode,
                   'num_workers': self.num_workers,
                   'max_ps_size': self.max_ps_size,
                   # run config
@@ -608,7 +586,6 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     def load_param_dict(self, param_dict):
         # general config
         self.policy = param_dict['policy']
-        self.inference_mode = param_dict['inference_mode']
         self.num_workers = param_dict['num_workers']
         self.max_ps_size = param_dict['max_ps_size']
 
@@ -654,7 +631,7 @@ class EnvironmentConfig:
 
     generate_static_obs_dataset: bool = True
     num_observational_train_samples: int = 100
-    num_observational_test_samples: int = 200
+    num_observational_test_samples: int = 0
 
     generate_static_intr_dataset: bool = False
     num_train_interventions: int = 20

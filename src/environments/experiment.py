@@ -126,23 +126,11 @@ class Experiment:
 
     @classmethod
     def load_param_dict(cls, param_dict: Union[None, dict, List[dict]]):
-        from src.config import use_gpu
-
         experiments = None
         if isinstance(param_dict, dict):
             experiments = Experiment(param_dict['interventions'], param_dict['data'])
-            if use_gpu and torch.cuda.is_available():
-                experiments.cuda()
-            else:
-                experiments.cpu()
-
         elif isinstance(param_dict, list):
             experiments = [Experiment(d['interventions'], d['data']) for d in param_dict]
-            for exp in experiments:
-                if use_gpu and torch.cuda.is_available():
-                    exp.cuda()
-                else:
-                    exp.cpu()
 
         return experiments
 

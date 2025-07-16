@@ -169,10 +169,7 @@ class ABCIArCOGP(ABCIBase):
         self.mechanism_model.discard_gps()
 
         # update mechanism hyperparameters
-        if self.cfg.inference_mode == 'joint':
-            self.mechanism_model.update_gp_hyperparameters(self.experiments, mechanism_keys)
-        elif set_data:
-            self.mechanism_model.set_data(self.experiments)
+        self.mechanism_model.update_gp_hyperparameters(self.experiments, mechanism_keys)
 
         # pre-compute mc weights
         self.co_weights = torch.zeros(num_cos, self.env.num_nodes)
@@ -195,8 +192,7 @@ class ABCIArCOGP(ABCIBase):
                             with torch.no_grad():
                                 weight = self.mechanism_model.node_mll(self.experiments, node, parents, prior_mode=True)
                                 weight -= torch.tensor(len(parent_sets[node])).log()  # uniform prior over parent sets
-                                if self.cfg.inference_mode == 'joint':
-                                    weight += self.mechanism_model.mechanism_log_hp_priors([key])
+                                weight += self.mechanism_model.mechanism_log_hp_priors([key])
 
                             self.ps_weight_cache[key] = weight
 
@@ -504,7 +500,7 @@ class ABCIArCOGP(ABCIBase):
 
         if self.cfg.compute_distributional_stats:
             if self.env.interventional_test_data is not None:
-                print(f'Computing distributional metrics on interventional test data...')
+                print(f'Computing distributional metrics on interventional test data...', flush=True)
                 mean_errors = []
                 mmds = []
                 with torch.no_grad():

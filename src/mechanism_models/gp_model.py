@@ -212,11 +212,6 @@ class GaussianProcessModel:
 
         return self.mechanism_log_hp_priors(keys)
 
-    def select_gp_hyperparams(self, posterior_hp: bool):
-        gps = [mech for mech in self.mechanisms.values() if isinstance(mech, GaussianProcess)]
-        for gp in gps:
-            gp.gp.select_hyperparameters(posterior_hp)
-
     def expected_noise_entropy(self, interventions, graph: nx.DiGraph, use_cache=False) -> torch.Tensor:
         entropy = torch.tensor(0.)
         for node in self.node_labels:

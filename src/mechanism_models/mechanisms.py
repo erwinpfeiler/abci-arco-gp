@@ -14,7 +14,7 @@ from torch import Tensor, Size
 from torch.nn import Module, ModuleDict
 from torch.nn.utils import vector_to_parameters
 
-from src.config import GaussianRootNodeConfig, GaussianProcessConfig, AdditiveSigmoidsConfig, use_gpu
+from src.config import GaussianRootNodeConfig, GaussianProcessConfig, AdditiveSigmoidsConfig
 from src.utils.utils import get_module_params
 
 
@@ -52,7 +52,7 @@ class Mechanism(Module):
         super().__init__()
         self.in_size = in_size
 
-    def _check_args(self, inputs: Tensor = None, targets: Tensor = None) -> Tuple[Tensor, Tensor, Tensor]:
+    def _check_args(self, inputs: Tensor = None, targets: Tensor = None) -> Tuple[Tensor, Tensor, Tuple[int]]:
         """
         Checks arguments (inputs and targets) shapes and compatibility. Re-shapes inputs to shape
         (num_batches, num_samples_per_batch, num_parents) and targets to shape (num_batches, num_samples_per_batch).
@@ -69,43 +69,16 @@ class Mechanism(Module):
             in_size = self.in_size if self.in_size > 0 else 1
             assert 2 <= inputs.dim() <= 3 and inputs.shape[-1] == in_size, print(f'Ill-shaped inputs: {inputs.shape}')
             inputs = inputs.unsqueeze(0) if inputs.dim() == 2 else inputs
-            batch_shape = inputs.shape[:-1]
+            batch_shape = tuple(inputs.shape[:-1])
         if targets is not None:
             assert 1 <= targets.dim() <= 2, print(f'Ill-shaped targets: {targets.shape}')
             targets = targets.unsqueeze(0) if targets.dim() == 1 else targets
-            batch_shape = targets.shape
+            batch_shape = tuple(targets.shape)
         if targets is not None and inputs is not None:
             assert inputs.shape[:-1] == targets.shape, print(f'Batch size mismatch: {inputs.shape} vs.'
                                                              f' {targets.shape}')
 
         return inputs, targets, batch_shape
-
-    def forward(self, inputs: Tensor, prior_mode: bool = False):
-        """
-        Computes the mechanism output for a given input tensor. Must be implemented by all child classes.
-
-        Parameters
-        ----------
-        inputs : Tensor
-            Mechanism inputs.
-        prior_mode : bool
-            Whether to evaluate the mechanism with prior or posterior parameters.
-        """
-        raise NotImplementedError
-
-    def sample(self, inputs: Tensor, prior_mode: bool = False):
-        """
-        Generates samples a given input tensor according to the implemented likelihood model. Must be implemented by
-        all child classes.
-
-        Parameters
-        ----------
-        inputs : Tensor
-            Mechanism inputs.
-        prior_mode : bool
-            Whether to evaluate the mechanism with prior or posterior parameters.
-        """
-        raise NotImplementedError
 
 
 class GaussianRootNode(Mechanism):
@@ -690,11 +663,6 @@ class SharedDataGaussianProcess(Mechanism):
             mean.eval()
             self.means[key] = mean
 
-            if use_gpu and torch.cuda.is_available():
-                self.kernels[key].cuda(torch.device('cuda'))
-                self.likelihoods[key].cuda(torch.device('cuda'))
-                self.means[key].cuda(torch.device('cuda'))
-
         def delete_kernel(self, key: str):
             self.likelihoods.pop(key)
             self.kernels.pop(key)
@@ -751,10 +719,6 @@ class SharedDataGaussianProcess(Mechanism):
                 likelihood_param_vec = param_dict['likelihood_param_dict'][key].float()
                 kernel_param_vec = param_dict['kernel_param_dict'][key].float()
                 mean_param_vec = param_dict['mean_param_dict'][key].float()
-                if use_gpu and torch.cuda.is_available():
-                    likelihood_param_vec.cuda(torch.device('cuda'))
-                    kernel_param_vec.cuda(torch.device('cuda'))
-                    mean_param_vec.cuda(torch.device('cuda'))
 
                 vector_to_parameters(likelihood_param_vec, self.likelihoods[key].parameters())
                 vector_to_parameters(kernel_param_vec, self.kernels[key].parameters())
@@ -810,10 +774,6 @@ class SharedDataGaussianProcess(Mechanism):
             self.lscale_priors[key] = dist.Gamma(self.cfg.lscale_concentration_multiplier * len(parents),
                                                  self.cfg.lscale_rate)
 
-            if use_gpu and torch.cuda.is_available():
-                self.kernels[key].cuda(torch.device('cuda'))
-                self.likelihoods[key].cuda(torch.device('cuda'))
-
         def delete_kernel(self, key: str):
             self.likelihoods.pop(key)
             self.kernels.pop(key)
@@ -867,9 +827,6 @@ class SharedDataGaussianProcess(Mechanism):
                 self.init_kernel(key)
                 likelihood_param_vec = param_dict['likelihood_param_dict'][key].float()
                 kernel_param_vec = param_dict['kernel_param_dict'][key].float()
-                if use_gpu and torch.cuda.is_available():
-                    likelihood_param_vec.cuda(torch.device('cuda'))
-                    kernel_param_vec.cuda(torch.device('cuda'))
 
                 vector_to_parameters(likelihood_param_vec, self.likelihoods[key].parameters())
                 vector_to_parameters(kernel_param_vec, self.kernels[key].parameters())

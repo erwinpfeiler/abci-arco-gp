@@ -111,7 +111,7 @@ class ABCIBase:
         if output_dir is not None:
             num_experiments_conducted = len(self.experiments)
             export_dict = {k: v for k, v in self.stats.items() if k.count('loss') == 0}
-            outpath = os.path.join(self.cfg.output_dir,
+            outpath = os.path.join(output_dir,
                                    f'stats-{self.cfg.model_name}-{self.cfg.policy}-{self.env.name}'
                                    f'-{self.cfg.run_id}-exp-{num_experiments_conducted}.csv')
             export_stats(export_dict, outpath)

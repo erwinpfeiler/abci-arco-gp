@@ -228,10 +228,7 @@ class ABCIDiBSGP(ABCIBase):
         self.mechanism_model.discard_topo_orders()
 
         # update mechanism hyperparameters
-        if self.cfg.inference_mode == 'joint':
-            self.mechanism_model.update_gp_hyperparameters(self.experiments, list(mechanism_keys))
-        elif set_data:
-            self.mechanism_model.set_data(self.experiments)
+        self.mechanism_model.update_gp_hyperparameters(self.experiments, list(mechanism_keys))
 
         return mc_graphs, mc_adj_mats
 
@@ -243,8 +240,7 @@ class ABCIDiBSGP(ABCIBase):
         for pidx in range(num_particles):
             for graph in graphs[pidx]:
                 mll = self.mechanism_model.mll(experiments, graph, prior_mode=prior_mode, use_cache=use_cache)
-                if self.cfg.inference_mode == 'joint':
-                    mll += self.mechanism_model.log_hp_prior(graph)
+                mll += self.mechanism_model.log_hp_prior(graph)
                 graph_mlls.append(mll)
 
         graph_mlls = torch.stack(graph_mlls).view(num_particles, num_mc_graphs)
@@ -462,7 +458,7 @@ class ABCIDiBSGP(ABCIBase):
 
         if self.cfg.compute_distributional_stats:
             if self.env.interventional_test_data is not None:
-                print(f'Computing distributional metrics on interventional test data...')
+                print(f'Computing distributional metrics on interventional test data...', flush=True)
                 mean_errors = []
                 mmds = []
                 with torch.no_grad():

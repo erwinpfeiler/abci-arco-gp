@@ -1,13 +1,6 @@
 from typing import List, Tuple, Dict, Any, Optional
 
-import torch
-
 from src.environments.experiment import InterventionalDistributionsQuery
-
-# global params
-use_gpu: bool = False
-if use_gpu and torch.cuda.is_available():
-    torch.set_default_device('cuda')
 
 
 ##############################################################################################
