@@ -12,7 +12,7 @@ from src.mechanism_models.mechanisms import get_mechanism_key
 from src.mechanism_models.shared_data_gp_model import SharedDataGaussianProcessModel
 from src.utils.causal_orders import CausalOrder, generate_all_mechanisms, generate_all_parent_sets
 from src.utils.graphs import dag_to_cpdag, adj_mat_to_graph
-from src.utils.metrics import aid, compute_structure_metrics, mmd
+from src.utils.metrics import aid, compute_structure_metrics, mmd, earth_movers_distance
 from src.utils.utils import inf_tensor
 
 
@@ -426,6 +426,15 @@ class ABCIArCOGP(ABCIBase):
         adj_mask = co.get_adjacency_mask() if isinstance(co, CausalOrder) else co
         return generate_all_parent_sets(self.env.node_labels, self.cfg.max_ps_size, adj_mask)
 
+    def compute_posterior_co_edge_probs(self, mc_cos: List[CausalOrder]):
+        log_co_weights = self.co_weights.sum(dim=1)
+        co_weights = (log_co_weights - log_co_weights.logsumexp(dim=0)).view(-1).exp()
+
+        co_masks = torch.stack([co.get_adjacency_mask() for co in mc_cos], dim=0)
+        edge_probs = co_masks * co_weights.unsqueeze(-1).unsqueeze(-1)
+        edge_probs = edge_probs.sum(dim=0)
+        return edge_probs
+
     def compute_stats(self):
         mc_cos, mc_adj_masks = self.sample_mc_cos(set_data=True)
 
@@ -449,6 +458,14 @@ class ABCIArCOGP(ABCIBase):
         stats = compute_structure_metrics(true_cpdag, posterior_edge_probs, dag_to_cpdag=True)
         for stat_name, value in stats.items():
             self.record_stat(stat_name + '_cpdag', value)
+
+        # CO metrics
+        with torch.no_grad():
+            co_edge_probs = self.compute_posterior_co_edge_probs(mc_cos)
+
+        stats = compute_structure_metrics(true_adj_mat, co_edge_probs, dag_to_cpdag=False)
+        for stat_name, value in stats.items():
+            self.record_stat(stat_name + '_co', value)
 
         # for illustration: ESHD could also computed this way...
         # true_parent_sets = {node: set(self.env.graph.predecessors(node)) for node in self.env.node_labels}
@@ -503,6 +520,7 @@ class ABCIArCOGP(ABCIBase):
                 print(f'Computing distributional metrics on interventional test data...', flush=True)
                 mean_errors = []
                 mmds = []
+                emds = []
                 with torch.no_grad():
                     for eidx, exp in enumerate(self.env.interventional_test_data):
                         print(f'Computing metrics for intervention {eidx}/{len(self.env.interventional_test_data)}')
@@ -516,10 +534,15 @@ class ABCIArCOGP(ABCIBase):
 
                         mean_errors.append(posterior_mean - env_mean)
                         mmds.append(mmd(samples, env_samples, weights, bandwidth=0.2))
+                        emds.append(earth_movers_distance(samples, env_samples, weights))
 
                 mmds = torch.stack(mmds, dim=0)
                 self.record_stat('mmd', mmds.mean())
                 print(f'Average MMD is {mmds.mean()}')
+
+                emds = torch.stack(emds, dim=0)
+                self.record_stat('emd', emds.mean())
+                print(f'Average EMD is {emds.mean()}')
 
                 mean_errors = torch.stack(mean_errors, dim=0)
                 dmae = mean_errors.abs().sum(dim=-1).mean()
