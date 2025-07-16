@@ -107,7 +107,7 @@ class Simulation:
                     for key in df.columns:
                         stats[key] = torch.tensor(df[key])
                 else:
-                    param_dict = torch.load(file)
+                    param_dict = torch.load(file, weights_only=False)
                     stats = param_dict['stats']
                     for key in stats:
                         stats[key] = torch.tensor(stats[key])

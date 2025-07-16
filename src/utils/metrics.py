@@ -176,14 +176,14 @@ def aid(target: torch.Tensor, prediction: torch.Tensor, mode: str = 'ancestor'):
 
     # compute the aid
     if mode == 'ancestor':
-        distance, _ = ancestor_aid(target, prediction)
+        distance, _ = ancestor_aid(target, prediction, edge_direction="from row to column")
     elif mode == 'parent':
-        distance, _ = parent_aid(target, prediction)
+        distance, _ = parent_aid(target, prediction, edge_direction="from row to column")
     elif mode == 'oset':
-        distance, _ = oset_aid(target, prediction)
+        distance, _ = oset_aid(target, prediction, edge_direction="from row to column")
     else:
         print(f'Invalid AID mode {mode}. Using ancestor AID per default.')
-        distance, _ = ancestor_aid(target, prediction)
+        distance, _ = ancestor_aid(target, prediction, edge_direction="from row to column")
 
     return torch.tensor(distance)
 

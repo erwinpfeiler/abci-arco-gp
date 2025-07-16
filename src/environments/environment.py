@@ -414,7 +414,7 @@ class Environment:
 
     @classmethod
     def load(cls, path):
-        param_dict = torch.load(path)
+        param_dict = torch.load(path, weights_only=False)
         return Environment(param_dict=param_dict)
 
     def export_to_csv(self, outdir: str = './'):

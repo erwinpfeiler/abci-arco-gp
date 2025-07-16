@@ -511,5 +511,5 @@ class ABCIDiBSGP(ABCIBase):
 
     @classmethod
     def load(cls, path):
-        param_dict = torch.load(path)
+        param_dict = torch.load(path, weights_only=False)
         return ABCIDiBSGP(param_dict=param_dict)

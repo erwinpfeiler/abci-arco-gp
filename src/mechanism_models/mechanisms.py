@@ -1050,7 +1050,7 @@ class AdditiveSigmoids(Mechanism):
         self.eval()
         tmp = self.lengthscales * (inputs + self.offsets)
         components = self.outscales * tmp / (1. + tmp.abs())
-        outputs = components.sum(dim=-1, keepdims=True)
+        outputs = components.sum(dim=-1, keepdim=True)
         assert outputs.shape == output_shape, print(outputs.shape)
         return outputs
 
