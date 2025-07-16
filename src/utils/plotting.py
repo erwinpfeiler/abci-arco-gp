@@ -1,6 +1,6 @@
 import math
 import os
-from typing import List, Optional
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -87,7 +87,7 @@ class Simulation:
 
         return result_files
 
-    def load_results(self, stats_names: List[str], result_type: str = 'default'):
+    def load_results(self, result_type: str = 'default'):
 
         result_files = self.get_result_files(result_type)
         num_environments = len(result_files)
@@ -107,33 +107,13 @@ class Simulation:
                     for key in df.columns:
                         stats[key] = torch.tensor(df[key])
                 else:
-                    param_dict = torch.load(file, weights_only=False)
+                    param_dict = torch.load(file)
                     stats = param_dict['stats']
                     for key in stats:
                         stats[key] = torch.tensor(stats[key])
 
                 # collect stats per env
-                for stat_name in stats_names:
-                    if stat_name == 'interventional_test_ll':
-                        keys = [key for key in stats if key.startswith('interventional_test_ll')]
-                        if len(keys):
-                            data = torch.stack([stats[key] for key in keys]).sum(dim=0)
-                        else:
-                            print(f'No results for {stat_name} available!')
-                            continue
-                    elif stat_name == 'avg_interventional_kld':
-                        keys = [key for key in stats if key.startswith('avg_interventional_kld')]
-                        if len(keys):
-                            data = torch.stack([stats[key] for key in keys]).sum(dim=0)
-                        else:
-                            # print(f'No results for {stat_name} available!')
-                            continue
-                    elif stat_name not in stats:
-                        # print(f'No results for {stat_name} available!')
-                        continue
-                    else:
-                        data = stats[stat_name]
-
+                for stat_name, data in stats.items():
                     if stat_name in per_env_stats:
                         per_env_stats[stat_name].append(data)
                     else:
