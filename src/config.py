@@ -113,7 +113,12 @@ class AdditiveSigmoidsConfig:
 class GaussianProcessConfig:
     # general setup
     per_dim_lenghtscale: bool = True
-    kernel: str = 'rq'  # available: 'linear', 'rq', 'additive-rq'; not all types may be available for all GP classes
+    scaling_ls_prior: bool = True
+    constant_mean: bool = False  # uses constant mean prior if True, zero mean prior if false
+
+    kernel: str = 'additive-rq'  # 'linear', 'rq', 'additive-rq', 'rff'
+    num_rff_features: int = 5  # number of random Fourier features for RFF kernel
+    covar_jitter: float = 1e-3  # jitter for the covar matrix of the additive RQ kernel
 
     # setup for sampling ground-truth mechanisms
     num_support_points: int = 50
@@ -135,8 +140,8 @@ class GaussianProcessConfig:
     # hyper-prior params for inference (normalised data)
     noise_var_concentration: float = 2.
     noise_var_rate: float = 8.
-    outscale_concentration: float = 100.
-    outscale_rate: float = 10.
+    outscale_concentration: float = 5.
+    outscale_rate: float = 1.
     lscale_concentration_multiplier: float = 30.
     lscale_rate: float = 30.
     scale_mix_concentration: float = 20.
@@ -146,7 +151,11 @@ class GaussianProcessConfig:
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'per_dim_lenghtscale': self.per_dim_lenghtscale,
+                  'scaling_ls_prior': self.scaling_ls_prior,
+                  'constant_mean': self.constant_mean,
                   'kernel': self.kernel,
+                  'num_rff_features': self.num_rff_features,
+                  'covar_jitter': self.covar_jitter,
                   'num_support_points': self.num_support_points,
                   'support_min': self.support_min,
                   'support_max': self.support_max,
@@ -157,12 +166,19 @@ class GaussianProcessConfig:
                   'lscale_concentration_multiplier': self.lscale_concentration_multiplier,
                   'lscale_rate': self.lscale_rate,
                   'scale_mix_concentration': self.scale_mix_concentration,
-                  'scale_mix_rate': self.scale_mix_rate}
+                  'scale_mix_rate': self.scale_mix_rate,
+                  'offset_loc': self.offset_loc,
+                  'offset_scale': self.offset_scale
+                  }
         return params
 
     def load_param_dict(self, param_dict):
         self.per_dim_lenghtscale = param_dict['per_dim_lenghtscale']
+        self.scaling_ls_prior = param_dict['scaling_ls_prior']
+        self.constant_mean = param_dict['constant_mean']
         self.kernel = param_dict['kernel']
+        self.num_rff_features = param_dict['num_rff_features']
+        self.covar_jitter = param_dict['covar_jitter']
         self.num_support_points = param_dict['num_support_points']
         self.support_min = param_dict['support_min']
         self.support_max = param_dict['support_max']
@@ -174,6 +190,8 @@ class GaussianProcessConfig:
         self.lscale_rate = param_dict['lscale_rate']
         self.scale_mix_concentration = param_dict['scale_mix_concentration']
         self.scale_mix_rate = param_dict['scale_mix_rate']
+        self.offset_loc = param_dict['offset_loc']
+        self.offset_scale = param_dict['offset_scale']
 
 
 class GPModelConfig:

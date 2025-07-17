@@ -5,8 +5,9 @@ from typing import List, Tuple, Dict, Any
 import gpytorch
 import torch
 import torch.distributions as dist
+from gpytorch import add_jitter
 from gpytorch.distributions import MultivariateNormal
-from gpytorch.kernels import RQKernel, LinearKernel, ScaleKernel, AdditiveStructureKernel
+from gpytorch.kernels import RQKernel, LinearKernel, ScaleKernel, AdditiveStructureKernel, RFFKernel
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.means import ZeroMean, ConstantMean
 from gpytorch.models import ExactGP
@@ -624,9 +625,9 @@ class GaussianProcess(Mechanism):
 
 class SharedDataGaussianProcess(Mechanism):
     ##########################################################################
-    # Shared-data GP Linear Kernel
+    # Shared-data GP Base Kernel
     ##########################################################################
-    class SharedDataGPLinearKernel(ExactGP):
+    class BaseKernel(ExactGP):
         def __init__(self, cfg: GaussianProcessConfig, node_to_dim_map: Dict[str, int] = None,
                      param_dict: Dict[str, Any] = None):
             assert node_to_dim_map is not None or param_dict is not None
@@ -638,51 +639,48 @@ class SharedDataGaussianProcess(Mechanism):
                 self.load_param_dict(param_dict)
             else:
                 self.node_to_dim_map = node_to_dim_map
-                self.means = ModuleDict()
                 self.likelihoods = ModuleDict()
+                self.means = ModuleDict()
                 self.kernels = ModuleDict()
 
             # init hp priors
             # ATTENTION: do not name the HP priors "noise_prior", "outputscale_prior"
             self.noise_var_prior = dist.Gamma(cfg.noise_var_concentration, cfg.noise_var_rate)
-            self.outscale_prior = dist.Gamma(cfg.outscale_concentration, cfg.outscale_rate)
             self.offset_prior = dist.Normal(cfg.offset_loc, cfg.offset_scale)
+            self.outscale_prior = dist.Gamma(cfg.outscale_concentration, cfg.outscale_rate)
+            self.lscale_prior = dist.Gamma(cfg.lscale_concentration_multiplier, cfg.lscale_rate)
+            self.scale_mix_prior = dist.Gamma(cfg.scale_mix_concentration, cfg.scale_mix_rate)
 
         def init_kernel(self, key: str):
             likelihood = GaussianLikelihood()
             likelihood.eval()
             self.likelihoods[key] = likelihood
 
-            _, parents = resolve_mechanism_key(key)
-            active_dims = torch.LongTensor([self.node_to_dim_map[node] for node in parents])
-            kernel = LinearKernel(active_dims=active_dims)
-            kernel.eval()
-            self.kernels[key] = kernel
-
-            mean = ConstantMean()
+            mean = ConstantMean() if self.cfg.constant_mean else ZeroMean()
             mean.eval()
             self.means[key] = mean
 
         def delete_kernel(self, key: str):
             self.likelihoods.pop(key)
-            self.kernels.pop(key)
             self.means.pop(key)
+            self.kernels.pop(key)
 
         def delete_kernels(self, keys: List[str]):
             likelihoods = {key: lhd for key, lhd in self.likelihoods.items() if key not in keys}
             self.likelihoods = ModuleDict(likelihoods)
 
-            kernels = {key: kernel for key, kernel in self.kernels.items() if key not in keys}
-            self.kernels = ModuleDict(kernels)
-
             means = {key: mean for key, mean in self.means.items() if key not in keys}
             self.means = ModuleDict(means)
+
+            kernels = {key: kernel for key, kernel in self.kernels.items() if key not in keys}
+            self.kernels = ModuleDict(kernels)
 
         def init_hyperparams(self, key: str):
             noise_var = self.noise_var_prior.sample()
             self.likelihoods[key].noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
-            self.kernels[key].variance = self.outscale_prior.sample()
-            self.means[key].constant = self.offset_prior.sample()
+
+            if self.cfg.constant_mean:
+                self.means[key].constant = self.offset_prior.sample()
 
         def forward(self, x, key: str):
             mean = self.means[key](x)
@@ -690,79 +688,94 @@ class SharedDataGaussianProcess(Mechanism):
             return MultivariateNormal(mean, covar)
 
         def hyperparam_log_prior(self, key: str):
-            log_prior = self.noise_var_prior.log_prob(self.likelihoods[key].noise) + \
-                        self.outscale_prior.log_prob(self.kernels[key].variance) + \
-                        self.offset_prior.log_prob(self.means[key].constant)
+            log_prior = self.noise_var_prior.log_prob(self.likelihoods[key].noise)
+
+            if self.cfg.constant_mean:
+                log_prior += self.offset_prior.log_prob(self.means[key].constant)
+
             return log_prior.squeeze()
 
         def param_dict(self) -> Dict[str, Any]:
             # ATTENTION: does not store the training data!
             likelihood_param_dict = {k: get_module_params(m) for k, m in self.likelihoods.items()}
-            kernel_param_dict = {k: get_module_params(m) for k, m in self.kernels.items()}
             mean_param_dict = {k: get_module_params(m) for k, m in self.means.items()}
+            kernel_param_dict = {k: get_module_params(m) for k, m in self.kernels.items()}
 
             params = {'node_to_dim_map': self.node_to_dim_map,
                       'likelihood_param_dict': likelihood_param_dict,
-                      'kernel_param_dict': kernel_param_dict,
-                      'mean_param_dict': mean_param_dict}
+                      'mean_param_dict': mean_param_dict,
+                      'kernel_param_dict': kernel_param_dict}
             return params
 
         def load_param_dict(self, param_dict):
             # ATTENTION: does not load the training data!
-            self.means = ModuleDict()
             self.likelihoods = ModuleDict()
+            self.means = ModuleDict()
             self.kernels = ModuleDict()
-
             self.node_to_dim_map = param_dict['node_to_dim_map']
+
             for key in param_dict['likelihood_param_dict']:
                 self.init_kernel(key)
-                likelihood_param_vec = param_dict['likelihood_param_dict'][key].float()
-                kernel_param_vec = param_dict['kernel_param_dict'][key].float()
-                mean_param_vec = param_dict['mean_param_dict'][key].float()
 
+                likelihood_param_vec = param_dict['likelihood_param_dict'][key].float()
                 vector_to_parameters(likelihood_param_vec, self.likelihoods[key].parameters())
+
+                if param_dict['mean_param_dict'][key] is not None:
+                    mean_param_vec = param_dict['mean_param_dict'][key].float()
+                    vector_to_parameters(mean_param_vec, self.means[key].parameters())
+
+                kernel_param_vec = param_dict['kernel_param_dict'][key].float()
                 vector_to_parameters(kernel_param_vec, self.kernels[key].parameters())
-                vector_to_parameters(mean_param_vec, self.means[key].parameters())
 
         def get_parameters(self, keys: List[str] = None):
             if keys is None:
                 return self.parameters()
             else:
+                likelihood_params = [self.likelihoods[key].parameters() for key in keys if key in self.likelihoods]
                 mean_params = [self.means[key].parameters() for key in keys if key in self.means]
                 kernel_params = [self.kernels[key].parameters() for key in keys if key in self.kernels]
-                likelihood_params = [self.likelihoods[key].parameters() for key in keys if key in self.likelihoods]
-                return chain(*mean_params, *kernel_params, *likelihood_params)
+                return chain(*likelihood_params, *mean_params, *kernel_params)
 
     ##########################################################################
-    # Shared-data GP  RQ-Kernel Model
+    # Shared-data GP Linear Kernel
     ##########################################################################
-    class SharedDataGPRQKernel(ExactGP):
+    class LinearKernel(BaseKernel):
         def __init__(self, cfg: GaussianProcessConfig, node_to_dim_map: Dict[str, int] = None,
                      param_dict: Dict[str, Any] = None):
-            assert node_to_dim_map is not None or param_dict is not None
-            likelihood = GaussianLikelihood()
-            super().__init__(None, None, likelihood)
-            self.cfg = cfg
-            self.mean_module = ZeroMean()
-
-            if param_dict is not None:
-                self.load_param_dict(param_dict)
-            else:
-                self.node_to_dim_map = node_to_dim_map
-                self.likelihoods = ModuleDict()
-                self.kernels = ModuleDict()
-                self.lscale_priors: Dict[str, dist.Gamma] = {}
-
-            # init hp priors
-            # ATTENTION: do not name the HP priors "noise_prior", "outputscale_prior" or "lengthscale_prior"
-            self.noise_var_prior = dist.Gamma(cfg.noise_var_concentration, cfg.noise_var_rate)
-            self.outscale_prior = dist.Gamma(cfg.outscale_concentration, cfg.outscale_rate)
-            self.scale_mix_prior = dist.Gamma(cfg.scale_mix_concentration, cfg.scale_mix_rate)
+            super().__init__(cfg, node_to_dim_map, param_dict)
 
         def init_kernel(self, key: str):
-            likelihood = GaussianLikelihood()
-            likelihood.eval()
-            self.likelihoods[key] = likelihood
+            super().init_kernel(key)
+
+            _, parents = resolve_mechanism_key(key)
+            ard_num_dims = len(parents) if self.cfg.per_dim_lenghtscale else 1
+            active_dims = torch.LongTensor([self.node_to_dim_map[node] for node in parents])
+            kernel = LinearKernel(active_dims=active_dims, ard_num_dims=ard_num_dims)
+            kernel.eval()
+            self.kernels[key] = kernel
+
+        def init_hyperparams(self, key: str):
+            super().init_hyperparams(key)
+
+            _, parents = resolve_mechanism_key(key)
+            ls_size = Size((len(parents),)) if self.cfg.per_dim_lenghtscale else Size((1,))
+            self.kernels[key].variance = self.lscale_prior.sample(ls_size)
+
+        def hyperparam_log_prior(self, key: str):
+            log_prior = super().hyperparam_log_prior(key)
+            log_prior += self.lscale_prior.log_prob(self.kernels[key].variance).mean()
+            return log_prior.squeeze()
+
+    ##########################################################################
+    # Shared-data GP RQ-Kernel
+    ##########################################################################
+    class RQKernel(BaseKernel):
+        def __init__(self, cfg: GaussianProcessConfig, node_to_dim_map: Dict[str, int] = None,
+                     param_dict: Dict[str, Any] = None):
+            super().__init__(cfg, node_to_dim_map, param_dict)
+
+        def init_kernel(self, key: str):
+            super().init_kernel(key)
 
             _, parents = resolve_mechanism_key(key)
             active_dims = torch.LongTensor([self.node_to_dim_map[node] for node in parents])
@@ -771,73 +784,137 @@ class SharedDataGaussianProcess(Mechanism):
             kernel.eval()
             self.kernels[key] = kernel
 
-            self.lscale_priors[key] = dist.Gamma(self.cfg.lscale_concentration_multiplier * len(parents),
-                                                 self.cfg.lscale_rate)
-
-        def delete_kernel(self, key: str):
-            self.likelihoods.pop(key)
-            self.kernels.pop(key)
-
-        def delete_kernels(self, keys: List[str]):
-            likelihoods = {key: lhd for key, lhd in self.likelihoods.items() if key not in keys}
-            self.likelihoods = ModuleDict(likelihoods)
-
-            kernels = {key: kernel for key, kernel in self.kernels.items() if key not in keys}
-            self.kernels = ModuleDict(kernels)
-
         def init_hyperparams(self, key: str):
-            noise_var = self.noise_var_prior.sample()
-            self.likelihoods[key].noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
+            super().init_hyperparams(key)
+
             self.kernels[key].outputscale = self.outscale_prior.sample()
+            self.kernels[key].base_kernel.alpha = self.scale_mix_prior.sample()
             _, parents = resolve_mechanism_key(key)
             ls_size = Size((len(parents),)) if self.cfg.per_dim_lenghtscale else Size((1,))
-            self.kernels[key].base_kernel.lengthscale = self.lscale_priors[key].sample(ls_size)
-            self.kernels[key].base_kernel.alpha = self.scale_mix_prior.sample()
+            if self.cfg.scaling_ls_prior:
+                ls_prior = dist.Gamma(self.cfg.lscale_concentration_multiplier * len(parents), self.cfg.lscale_rate)
+            else:
+                ls_prior = self.lscale_prior
+            self.kernels[key].base_kernel.lengthscale = ls_prior.sample(ls_size)
+
+        def hyperparam_log_prior(self, key: str):
+            log_prior = super().hyperparam_log_prior(key)
+            log_prior += self.outscale_prior.log_prob(self.kernels[key].outputscale).mean() + \
+                         self.scale_mix_prior.log_prob(self.kernels[key].base_kernel.alpha).mean()
+
+            if self.cfg.scaling_ls_prior:
+                _, parents = resolve_mechanism_key(key)
+                ls_prior = dist.Gamma(self.cfg.lscale_concentration_multiplier * len(parents), self.cfg.lscale_rate)
+            else:
+                ls_prior = self.lscale_prior
+
+            log_prior += ls_prior.log_prob(self.kernels[key].base_kernel.lengthscale).mean()
+
+            return log_prior.squeeze()
+
+    ##########################################################################
+    # Shared-data GP Additive RQ-Kernel
+    ##########################################################################
+    class AdditiveRQKernel(BaseKernel):
+        def __init__(self, cfg: GaussianProcessConfig, node_to_dim_map: Dict[str, int] = None,
+                     param_dict: Dict[str, Any] = None):
+            super().__init__(cfg, node_to_dim_map, param_dict)
+
+        def init_kernel(self, key: str):
+            super().init_kernel(key)
+
+            _, parents = resolve_mechanism_key(key)
+            kernel = ScaleKernel(RQKernel(batch_shape=torch.Size([len(parents), 1]), ard_num_dims=1))
+            kernel.eval()
+            self.kernels[key] = kernel
+
+        def init_hyperparams(self, key: str):
+            super().init_hyperparams(key)
+
+            _, parents = resolve_mechanism_key(key)
+            if self.cfg.scaling_ls_prior:
+                ls_prior = dist.Gamma(self.cfg.lscale_concentration_multiplier * len(parents), self.cfg.lscale_rate)
+            else:
+                ls_prior = self.lscale_prior
+
+            batch_shape = torch.Size([len(parents), 1])
+            self.kernels[key].outputscale = self.outscale_prior.sample(batch_shape)
+            batch_shape = torch.Size([len(parents), 1, 1])
+            self.kernels[key].base_kernel.alpha = self.scale_mix_prior.sample(batch_shape)
+            batch_shape = torch.Size([len(parents), 1, 1, 1])
+            self.kernels[key].base_kernel.lengthscale = ls_prior.sample(batch_shape)
 
         def forward(self, x, key: str):
-            mean = self.mean_module(x)
-            covar = self.kernels[key](x)
+            # select only the relevant parent dimensions
+            _, parents = resolve_mechanism_key(key)
+            active_dims = torch.LongTensor([self.node_to_dim_map[node] for node in parents])
+            z = torch.index_select(x, dim=-1, index=active_dims)
+
+            mean = self.means[key](z)
+            covar = self.kernels[key](z.permute(2, 0, 1).unsqueeze(-1)).to_dense()
+            covar = add_jitter(covar.mean(dim=0), self.cfg.covar_jitter)  # to ensure invertibility
             return MultivariateNormal(mean, covar)
 
         def hyperparam_log_prior(self, key: str):
-            log_prior = self.noise_var_prior.log_prob(self.likelihoods[key].noise) + \
-                        self.outscale_prior.log_prob(self.kernels[key].outputscale) + \
-                        self.lscale_priors[key].log_prob(self.kernels[key].base_kernel.lengthscale).mean() + \
-                        self.scale_mix_prior.log_prob(self.kernels[key].base_kernel.alpha)
+            log_prior = super().hyperparam_log_prior(key)
+            log_prior += self.outscale_prior.log_prob(self.kernels[key].outputscale).mean() + \
+                         self.scale_mix_prior.log_prob(self.kernels[key].base_kernel.alpha).mean()
+
+            if self.cfg.scaling_ls_prior:
+                _, parents = resolve_mechanism_key(key)
+                ls_prior = dist.Gamma(self.cfg.lscale_concentration_multiplier * len(parents), self.cfg.lscale_rate)
+            else:
+                ls_prior = self.lscale_prior
+
+            log_prior += ls_prior.log_prob(self.kernels[key].base_kernel.lengthscale).mean()
+
             return log_prior.squeeze()
 
-        def param_dict(self) -> Dict[str, Any]:
-            # ATTENTION: does not store the training data!
-            likelihood_param_dict = {k: get_module_params(m) for k, m in self.likelihoods.items()}
-            kernel_param_dict = {k: get_module_params(m) for k, m in self.kernels.items()}
+    ##########################################################################
+    # Shared-data GP RFF Kernel
+    ##########################################################################
+    class RFFKernel(BaseKernel):
+        def __init__(self, cfg: GaussianProcessConfig, node_to_dim_map: Dict[str, int] = None,
+                     param_dict: Dict[str, Any] = None):
+            super().__init__(cfg, node_to_dim_map, param_dict)
+            self.num_dims = len(self.node_to_dim_map)
 
-            params = {'node_to_dim_map': self.node_to_dim_map,
-                      'likelihood_param_dict': likelihood_param_dict,
-                      'kernel_param_dict': kernel_param_dict}
-            return params
+        def init_kernel(self, key: str):
+            super().init_kernel(key)
 
-        def load_param_dict(self, param_dict):
-            # ATTENTION: does not load the training data!
-            self.likelihoods = ModuleDict()
-            self.kernels = ModuleDict()
-            self.lscale_priors: Dict[str, dist.Gamma] = {}
+            _, parents = resolve_mechanism_key(key)
+            active_dims = torch.LongTensor([self.node_to_dim_map[node] for node in parents])
+            ard_num_dims = len(parents) if self.cfg.per_dim_lenghtscale else 1
+            kernel = ScaleKernel(
+                RFFKernel(self.cfg.num_rff_features, active_dims=active_dims, ard_num_dims=ard_num_dims))
+            kernel.eval()
+            self.kernels[key] = kernel
 
-            self.node_to_dim_map = param_dict['node_to_dim_map']
-            for key in param_dict['likelihood_param_dict']:
-                self.init_kernel(key)
-                likelihood_param_vec = param_dict['likelihood_param_dict'][key].float()
-                kernel_param_vec = param_dict['kernel_param_dict'][key].float()
+        def init_hyperparams(self, key: str):
+            super().init_hyperparams(key)
 
-                vector_to_parameters(likelihood_param_vec, self.likelihoods[key].parameters())
-                vector_to_parameters(kernel_param_vec, self.kernels[key].parameters())
-
-        def get_parameters(self, keys: List[str] = None):
-            if keys is None:
-                return self.parameters()
+            self.kernels[key].outputscale = self.outscale_prior.sample()
+            _, parents = resolve_mechanism_key(key)
+            ls_size = Size((len(parents),)) if self.cfg.per_dim_lenghtscale else Size((1,))
+            if self.cfg.scaling_ls_prior:
+                ls_prior = dist.Gamma(self.cfg.lscale_concentration_multiplier * len(parents), self.cfg.lscale_rate)
             else:
-                kernel_params = [self.kernels[key].parameters() for key in keys if key in self.kernels]
-                likelihood_params = [self.likelihoods[key].parameters() for key in keys if key in self.likelihoods]
-                return chain(*kernel_params, *likelihood_params)
+                ls_prior = self.lscale_prior
+            self.kernels[key].base_kernel.lengthscale = ls_prior.sample(ls_size)
+
+        def hyperparam_log_prior(self, key: str):
+            log_prior = super().hyperparam_log_prior(key)
+            log_prior += self.outscale_prior.log_prob(self.kernels[key].outputscale)
+
+            if self.cfg.scaling_ls_prior:
+                _, parents = resolve_mechanism_key(key)
+                ls_prior = dist.Gamma(self.cfg.lscale_concentration_multiplier * len(parents), self.cfg.lscale_rate)
+            else:
+                ls_prior = self.lscale_prior
+
+            log_prior += ls_prior.log_prob(self.kernels[key].base_kernel.lengthscale).mean()
+
+            return log_prior.squeeze()
 
     ##########################################################################
     # Main-class functions
@@ -855,9 +932,13 @@ class SharedDataGaussianProcess(Mechanism):
 
             # initialize likelihood and gp model
             if self.cfg.kernel == 'linear':
-                self.gp = SharedDataGaussianProcess.SharedDataGPLinearKernel(self.cfg, node_to_dim_map)
+                self.gp = SharedDataGaussianProcess.LinearKernel(self.cfg, node_to_dim_map)
             elif self.cfg.kernel == 'rq':
-                self.gp = SharedDataGaussianProcess.SharedDataGPRQKernel(self.cfg, node_to_dim_map)
+                self.gp = SharedDataGaussianProcess.RQKernel(self.cfg, node_to_dim_map)
+            elif self.cfg.kernel == 'additive-rq':
+                self.gp = SharedDataGaussianProcess.AdditiveRQKernel(self.cfg, node_to_dim_map)
+            elif self.cfg.kernel == 'rff':
+                self.gp = SharedDataGaussianProcess.RFFKernel(self.cfg, node_to_dim_map)
             else:
                 raise NotImplementedError
 
@@ -899,32 +980,38 @@ class SharedDataGaussianProcess(Mechanism):
     def get_parameters(self, keys: List[str] = None):
         return self.gp.get_parameters(keys)
 
+    def get_fdist(self, inputs: Tensor, key: str, prior_mode=False):
+        inputs, _, batch_shape = self._check_args(inputs)
+        self.activate(key)
+        with gpytorch.settings.prior_mode(prior_mode):
+            f_dist = self.gp(inputs, key=key)
+
+        return f_dist
+
+    def get_ydist(self, inputs: Tensor, key: str, prior_mode=False):
+        f_dist = self.get_fdist(inputs, key, prior_mode)
+        y_dist = self.gp.likelihoods[key](f_dist)
+        return y_dist
+
     def forward(self, inputs: Tensor, key: str, prior_mode=False):
         inputs, _, batch_shape = self._check_args(inputs)
         output_shape = batch_shape + (1,)
 
-        self.activate(key)
-        with gpytorch.settings.prior_mode(prior_mode):
-            f_dist = self.gp(inputs, key=key)
+        f_dist = self.get_fdist(inputs, key, prior_mode)
         return f_dist.mean.view(output_shape)
 
     def sample(self, inputs: Tensor, key: str, prior_mode=False):
         inputs, _, batch_shape = self._check_args(inputs)
         output_shape = batch_shape + (1,)
 
-        self.activate(key)
-        with gpytorch.settings.prior_mode(prior_mode):
-            f_dist = self.gp(inputs, key=key)
-        y_dist = self.gp.likelihoods[key](f_dist)
+        y_dist = self.get_ydist(inputs, key, prior_mode)
         return y_dist.sample().view(output_shape)
 
     def mll(self, inputs: Tensor, targets: Tensor, key: str, prior_mode=False, reduce=True):
         inputs, targets, batch_shape = self._check_args(inputs, targets)
         output_shape = batch_shape[:-1]
-        self.activate(key)
-        with gpytorch.settings.prior_mode(prior_mode):
-            f_dist = self.gp(inputs, key=key)
-            y_dist = self.gp.likelihoods[key](f_dist)
+
+        y_dist = self.get_ydist(inputs, key, prior_mode)
 
         mlls = y_dist.log_prob(targets)
         assert mlls.shape == output_shape, print(f'Invalid shape {mlls.shape}!')
@@ -954,10 +1041,13 @@ class SharedDataGaussianProcess(Mechanism):
 
         # initialize likelihood and gp model
         if self.cfg.kernel == 'linear':
-            self.gp = SharedDataGaussianProcess.SharedDataGPLinearKernel(self.cfg,
-                                                                         param_dict=param_dict['gp_param_dict'])
+            self.gp = SharedDataGaussianProcess.LinearKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
         elif self.cfg.kernel == 'rq':
-            self.gp = SharedDataGaussianProcess.SharedDataGPRQKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
+            self.gp = SharedDataGaussianProcess.RQKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
+        elif self.cfg.kernel == 'additive-rq':
+            self.gp = SharedDataGaussianProcess.AdditiveRQKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
+        elif self.cfg.kernel == 'rff':
+            self.gp = SharedDataGaussianProcess.RFFKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
         else:
             raise NotImplementedError
 

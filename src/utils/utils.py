@@ -11,7 +11,10 @@ def inf_tensor():
 
 
 def get_module_params(m):
-    return parameters_to_vector(m.parameters()).detach().cpu()
+    if len(list(m.parameters())) > 0:
+        return parameters_to_vector(m.parameters()).detach().cpu()
+
+    return None
 
 
 def sizeof(obj, scale=1e-6, print_threshold=-1.):
