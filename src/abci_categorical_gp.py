@@ -124,8 +124,7 @@ class ABCICategoricalGP(ABCIBase):
             # update model
             print(f'Updating model...', flush=True)
             self.mechanism_model.update_gp_hyperparameters(self.experiments)
-
-            self.graph_posterior = self.compute_graph_posterior(self.experiments, use_cache=True)
+            self.graph_posterior = self.compute_graph_posterior(self.experiments)
 
             # save model checkpoints
             if (epoch + 1) % self.cfg.checkpoint_interval == 0 or epoch == self.cfg.num_experiments - 1:
@@ -166,12 +165,12 @@ class ABCICategoricalGP(ABCIBase):
         self.graph_posterior = best_posterior
         return best_intervention
 
-    def compute_graph_posterior(self, experiments: List[Experiment], use_cache: bool = False) -> CategoricalModel:
+    def compute_graph_posterior(self, experiments: List[Experiment]) -> CategoricalModel:
         posterior = CategoricalModel(self.env.node_labels)
         self.mechanism_model.clear_prior_mll_cache()
         with torch.no_grad():
             for graph in posterior.graphs:
-                mll = self.mechanism_model.mll(experiments, graph, prior_mode=True, use_cache=use_cache).squeeze()
+                mll = self.mechanism_model.mll(experiments, graph, prior_mode=True, use_cache=True).squeeze()
                 log_prob = self.mechanism_model.log_hp_prior(graph)
                 log_prob += mll + self.graph_prior.log_prob(graph)
 

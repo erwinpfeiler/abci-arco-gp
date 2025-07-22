@@ -183,7 +183,7 @@ class GaussianProcessModel:
                 # compute log-likelihood
                 mechanism = self.get_mechanism(node, parents=parents)
                 try:
-                    mll = mechanism.mll(inputs, targets, prior_mode, reduce=reduce)
+                    mll = mechanism.mll(inputs, targets, prior_mode=prior_mode, reduce=reduce)
                 except Exception as e:
                     print(
                         f'Exception occured in GaussianProcessModel.mll() when computing MLL for mechanism {key} '
@@ -253,7 +253,7 @@ class GaussianProcessModel:
             # compute log-likelihood
             mechanism = self.mechanisms[key]
             try:
-                mlls += mechanism.mll(inputs, targets, prior_mode) / targets.numel()
+                mlls += mechanism.mll(inputs, targets, prior_mode=prior_mode) / targets.numel()
             except Exception as e:
                 print(
                     f'Exception occured in GaussianProcessModel.gp_mlls() when computing MLL for mechanism '
@@ -272,7 +272,7 @@ class GaussianProcessModel:
         if not gps:
             return torch.tensor(0.)
 
-        log_priors = torch.stack([gp.gp.hyperparam_log_prior() for gp in gps])
+        log_priors = torch.stack([gp.hyperparam_log_prior() for gp in gps])
         return log_priors.sum()
 
     def create_mechanism(self, num_parents: int, param_dict: Dict[str, Any] = None) -> Mechanism:

@@ -7,7 +7,7 @@ import torch
 import torch.distributions as dist
 from gpytorch import add_jitter
 from gpytorch.distributions import MultivariateNormal
-from gpytorch.kernels import RQKernel, LinearKernel, ScaleKernel, AdditiveStructureKernel, RFFKernel
+from gpytorch.kernels import RQKernel, LinearKernel, ScaleKernel, RFFKernel
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.means import ZeroMean, ConstantMean
 from gpytorch.models import ExactGP
@@ -225,402 +225,6 @@ class GaussianRootNode(Mechanism):
         self.static = param_dict['static']
         self.cfg = GaussianRootNodeConfig()
         self.cfg.load_param_dict(param_dict['cfg_param_dict'])
-
-
-class GaussianProcess(Mechanism):
-    ##########################################################################
-    # Additive RQ Kernel
-    class GaussianProcessAdditiveRQKernel(ExactGP):
-        posterior_noise: Tensor
-        posterior_outputscale: Tensor
-        posterior_lengthscale: Tensor
-        posterior_scale_mix: Tensor
-
-        def __init__(self, in_size: int, cfg: GaussianProcessConfig, param_dict: Dict[str, Any] = None):
-            assert in_size > 0, print(f'Invalid input dimensions {in_size}!')
-            likelihood = GaussianLikelihood()
-            super().__init__(None, None, likelihood)
-            self.in_size = in_size
-            self.cfg = cfg
-            self.mean_module = ZeroMean()
-            base_kernel = RQKernel(ard_num_dims=self.in_size)
-            self.kernel = ScaleKernel(AdditiveStructureKernel(base_kernel, self.in_size))
-
-            # init hp priors
-            # ATTENTION: do not name the HP priors "noise_prior", "outputscale_prior" or "lengthscale_prior"
-            self.noise_var_prior = dist.Gamma(cfg.noise_var_concentration, cfg.noise_var_rate)
-            self.outscale_prior = dist.Gamma(cfg.outscale_concentration, cfg.outscale_rate)
-            self.lscale_prior = dist.Gamma(cfg.lscale_concentration_multiplier, cfg.lscale_rate)
-            self.scale_mix_prior = dist.Gamma(cfg.scale_mix_concentration, cfg.scale_mix_rate)
-
-            if param_dict is not None:
-                self.load_param_dict(param_dict)
-            else:
-                # init kernel parameters
-                self.init_hyperparams()
-
-            self.posterior_hp = False
-            self.select_hyperparameters(posterior_hp=True)
-
-        def forward(self, x):
-            mean = self.mean_module(x)
-            covar = self.kernel(x)
-            return MultivariateNormal(mean, covar)
-
-        def hyperparam_log_prior(self):
-            log_prior = self.noise_var_prior.log_prob(self.likelihood.noise) + \
-                        self.outscale_prior.log_prob(self.kernel.outputscale) + \
-                        self.lscale_prior.log_prob(self.kernel.base_kernel.base_kernel.lengthscale).mean() + \
-                        self.scale_mix_prior.log_prob(self.kernel.base_kernel.base_kernel.alpha)
-            return log_prior.squeeze()
-
-        def init_hyperparams(self):
-            noise_var = self.noise_var_prior.sample()
-            self.posterior_noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
-            self.posterior_outputscale = self.outscale_prior.sample()
-            self.posterior_scale_mix = self.scale_mix_prior.sample()
-            if self.cfg.per_dim_lenghtscale:
-                self.posterior_lengthscale = self.lscale_prior.sample(Size((self.in_size,)))
-            else:
-                self.posterior_lengthscale = self.lscale_prior.sample(Size((1,))).expand(self.in_size)
-
-        def select_hyperparameters(self, posterior_hp: bool):
-            if posterior_hp:
-                if not self.posterior_hp:
-                    # load posterior HPs
-                    self.likelihood.noise = self.posterior_noise
-                    self.kernel.outputscale = self.posterior_outputscale
-                    self.kernel.base_kernel.base_kernel.lengthscale = self.posterior_lengthscale
-                    self.kernel.base_kernel.base_kernel.alpha = self.posterior_scale_mix
-                    self.posterior_hp = True
-            else:
-                # store posterior HPs if posterior HPs currently in use
-                if self.posterior_hp:
-                    self.posterior_noise = self.likelihood.noise.detach()
-                    self.posterior_outputscale = self.kernel.outputscale.detach()
-                    self.posterior_lengthscale = self.kernel.base_kernel.base_kernel.lengthscale.detach()
-                    self.posterior_scale_mix = self.kernel.base_kernel.base_kernel.alpha.detach()
-                    self.posterior_hp = False
-
-                # draw HPs from HP prior
-                self.likelihood.noise = self.noise_var_prior.sample()
-                self.kernel.outputscale = self.outscale_prior.sample()
-                self.kernel.base_kernel.base_kernel.alpha = self.scale_mix_prior.sample()
-                if self.cfg.per_dim_lenghtscale:
-                    self.kernel.base_kernel.base_kernel.lengthscale = self.lscale_prior.sample(Size((self.in_size,)))
-                else:
-                    self.kernel.base_kernel.base_kernel.lengthscale = self.lscale_prior.sample(Size((1,))).expand(
-                        self.in_size)
-
-        def param_dict(self) -> Dict[str, Any]:
-            params = {'in_size': self.in_size,
-                      'posterior_noise': self.posterior_noise,
-                      'posterior_outputscale': self.posterior_outputscale,
-                      'posterior_lengthscale': self.posterior_lengthscale,
-                      'posterior_scale_mix': self.posterior_scale_mix}
-            return params
-
-        def load_param_dict(self, param_dict):
-            self.in_size = param_dict['in_size']
-            self.posterior_noise = param_dict['posterior_noise'].float()
-            self.posterior_outputscale = param_dict['posterior_outputscale'].float()
-            self.posterior_lengthscale = param_dict['posterior_lengthscale'].float()
-            self.posterior_scale_mix = param_dict['posterior_scale_mix'].float()
-
-    ##########################################################################
-    # RQ Kernel
-    class GaussianProcessRQKernel(ExactGP):
-        posterior_noise: Tensor
-        posterior_outputscale: Tensor
-        posterior_lengthscale: Tensor
-        posterior_scale_mix: Tensor
-
-        def __init__(self, in_size: int, cfg: GaussianProcessConfig, param_dict: Dict[str, Any] = None):
-            assert in_size > 0, print(f'Invalid input dimensions {in_size}!')
-            likelihood = GaussianLikelihood()
-            super().__init__(None, None, likelihood)
-            self.in_size = in_size
-            self.cfg = cfg
-            self.mean_module = ZeroMean()
-            ard_num_dims = in_size if self.cfg.per_dim_lenghtscale else 1
-            self.covar_module = ScaleKernel(RQKernel(ard_num_dims=ard_num_dims))
-
-            # init hp priors
-            # ATTENTION: do not name the HP priors "noise_prior", "outputscale_prior" or "lengthscale_prior"
-            self.noise_var_prior = dist.Gamma(cfg.noise_var_concentration, cfg.noise_var_rate)
-            self.outscale_prior = dist.Gamma(cfg.outscale_concentration, cfg.outscale_rate)
-            self.lscale_prior = dist.Gamma(cfg.lscale_concentration_multiplier * in_size, cfg.lscale_rate)
-            self.scale_mix_prior = dist.Gamma(cfg.scale_mix_concentration, cfg.scale_mix_rate)
-
-            if param_dict is not None:
-                self.load_param_dict(param_dict)
-            else:
-                # init kernel parameters
-                self.init_hyperparams()
-
-            self.posterior_hp = False
-            self.select_hyperparameters(posterior_hp=True)
-
-        def forward(self, x):
-            mean = self.mean_module(x)
-            covar = self.covar_module(x)
-            return MultivariateNormal(mean, covar)
-
-        def hyperparam_log_prior(self):
-            log_prior = self.noise_var_prior.log_prob(self.likelihood.noise) + \
-                        self.outscale_prior.log_prob(self.covar_module.outputscale) + \
-                        self.lscale_prior.log_prob(self.covar_module.base_kernel.lengthscale).mean() + \
-                        self.scale_mix_prior.log_prob(self.covar_module.base_kernel.alpha)
-            return log_prior.squeeze()
-
-        def init_hyperparams(self):
-            noise_var = self.noise_var_prior.sample()
-            self.posterior_noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
-            self.posterior_outputscale = self.outscale_prior.sample()
-            ls_size = Size((self.in_size,)) if self.cfg.per_dim_lenghtscale else Size((1,))
-            self.posterior_lengthscale = self.lscale_prior.sample(ls_size)
-            self.posterior_scale_mix = self.scale_mix_prior.sample()
-
-        def select_hyperparameters(self, posterior_hp: bool):
-            if posterior_hp:
-                if not self.posterior_hp:
-                    # load posterior HPs
-                    self.likelihood.noise = self.posterior_noise
-                    self.covar_module.outputscale = self.posterior_outputscale
-                    self.covar_module.base_kernel.lengthscale = self.posterior_lengthscale
-                    self.covar_module.base_kernel.alpha = self.posterior_scale_mix
-                    self.posterior_hp = True
-            else:
-                # store posterior HPs if posterior HPs currently in use
-                if self.posterior_hp:
-                    self.posterior_noise = self.likelihood.noise.detach()
-                    self.posterior_outputscale = self.covar_module.outputscale.detach()
-                    self.posterior_lengthscale = self.covar_module.base_kernel.lengthscale.detach()
-                    self.posterior_scale_mix = self.covar_module.base_kernel.alpha.detach()
-                    self.posterior_hp = False
-
-                # draw HPs from HP prior
-                self.likelihood.noise = self.noise_var_prior.sample()
-                self.covar_module.outputscale = self.outscale_prior.sample()
-                ls_size = Size((self.in_size,)) if self.cfg.per_dim_lenghtscale else Size((1,))
-                self.covar_module.base_kernel.lengthscale = self.lscale_prior.sample(ls_size)
-                self.covar_module.base_kernel.alpha = self.scale_mix_prior.sample()
-
-        def param_dict(self) -> Dict[str, Any]:
-            params = {'in_size': self.in_size,
-                      'posterior_noise': self.posterior_noise,
-                      'posterior_outputscale': self.posterior_outputscale,
-                      'posterior_lengthscale': self.posterior_lengthscale,
-                      'posterior_scale_mix': self.posterior_scale_mix}
-            return params
-
-        def load_param_dict(self, param_dict):
-            self.in_size = param_dict['in_size']
-            self.posterior_noise = param_dict['posterior_noise'].float()
-            self.posterior_outputscale = param_dict['posterior_outputscale'].float()
-            self.posterior_lengthscale = param_dict['posterior_lengthscale'].float()
-            self.posterior_scale_mix = param_dict['posterior_scale_mix'].float()
-
-    ##########################################################################
-    # Linear Kernel
-    class GaussianProcessLinearKernel(ExactGP):
-        posterior_noise: Tensor
-        posterior_outputscale: Tensor
-        posterior_offset: Tensor
-
-        def __init__(self, cfg: GaussianProcessConfig, param_dict: Dict[str, Any] = None):
-            likelihood = GaussianLikelihood()
-            super().__init__(None, None, likelihood)
-            self.mean_module = ConstantMean()
-            self.covar_module = LinearKernel()
-
-            # init hp priors
-            # ATTENTION: do not name the HP priors "noise_prior", "outputscale_prior" or "lengthscale_prior"
-            self.noise_var_prior = dist.Gamma(cfg.noise_var_concentration, cfg.noise_var_rate)
-            self.outscale_prior = dist.Gamma(cfg.outscale_concentration, cfg.outscale_rate)
-            self.offset_prior = dist.Normal(cfg.offset_loc, cfg.offset_scale)
-
-            if param_dict is not None:
-                self.load_param_dict(param_dict)
-            else:
-                # draw kernel parameters
-                self.init_hyperparams()
-
-            self.posterior_hp = False
-            self.select_hyperparameters(posterior_hp=True)
-
-        def forward(self, x):
-            mean = self.mean_module(x)
-            covar = self.covar_module(x)
-            return MultivariateNormal(mean, covar)
-
-        def hyperparam_log_prior(self):
-            log_prior = self.noise_var_prior.log_prob(self.likelihood.noise) + \
-                        self.outscale_prior.log_prob(self.covar_module.variance) + \
-                        self.offset_prior.log_prob(self.mean_module.constant)
-            return log_prior.squeeze()
-
-        def init_hyperparams(self):
-            noise_var = self.noise_var_prior.sample()
-            self.posterior_noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
-            self.posterior_outputscale = self.outscale_prior.sample()
-            self.posterior_offset = self.offset_prior.sample()
-
-        def select_hyperparameters(self, posterior_hp: bool):
-            if posterior_hp:
-                if not self.posterior_hp:
-                    # load posterior HPs
-                    self.likelihood.noise = self.posterior_noise
-                    self.covar_module.variance = self.posterior_outputscale
-                    self.mean_module.constant = self.posterior_offset
-                    self.posterior_hp = True
-            else:
-                # store posterior HPs if posterior HPs currently in use
-                if self.posterior_hp:
-                    self.posterior_noise = self.likelihood.noise.detach()
-                    self.posterior_outputscale = self.covar_module.variance.detach()
-                    self.posterior_offset = self.mean_module.constant.detach()
-                    self.posterior_hp = False
-
-                # draw HPs from HP prior
-                self.likelihood.noise = self.noise_var_prior.sample()
-                self.covar_module.variance = self.outscale_prior.sample()
-                self.mean_module.constant = self.offset_prior.sample()
-
-        def param_dict(self) -> Dict[str, Any]:
-            params = {'posterior_noise': self.posterior_noise,
-                      'posterior_outputscale': self.posterior_outputscale,
-                      'posterior_offset': self.posterior_offset}
-            return params
-
-        def load_param_dict(self, param_dict):
-            self.posterior_noise = param_dict['posterior_noise'].float()
-            self.posterior_outputscale = param_dict['posterior_outputscale'].float()
-            self.posterior_offset = param_dict['posterior_offset'].float()
-
-    ##########################################################################
-    # Main-class functions
-    ##########################################################################
-    def __init__(self, in_size: int, static=False, cfg: GaussianProcessConfig = None,
-                 param_dict: Dict[str, Any] = None):
-        super().__init__(in_size)
-        if param_dict is not None:
-            self.load_param_dict(param_dict)
-        else:
-            # load config
-            self.cfg = GaussianProcessConfig() if cfg is None else cfg
-
-            # initialize likelihood and gp model
-            if self.cfg.kernel == 'linear':
-                self.gp = GaussianProcess.GaussianProcessLinearKernel(self.cfg)
-            elif self.cfg.kernel == 'rq':
-                self.gp = GaussianProcess.GaussianProcessRQKernel(in_size, self.cfg)
-            elif self.cfg.kernel == 'additive-rq':
-                self.gp = GaussianProcess.GaussianProcessAdditiveRQKernel(in_size, self.cfg)
-            else:
-                raise NotImplementedError
-
-            self.static = static
-            if static:
-                self.init_as_static()
-
-    def init_as_static(self):
-        # generate support points and sample training targets from the GP prior
-        sampling_factor = 1 if self.cfg.kernel == 'additive-rq' else self.in_size
-        num_train = self.cfg.num_support_points * sampling_factor
-        spread = self.cfg.support_max - self.cfg.support_min
-        train_x = spread * torch.rand((num_train, self.in_size)) + self.cfg.support_min
-        self.eval()
-        with gpytorch.settings.prior_mode(True):
-            f_dist = self.gp(train_x)
-            y_dist = self.gp.likelihood(f_dist)
-            train_y = y_dist.sample().detach()
-
-        # update GP data
-        self.set_data(train_x, train_y)
-
-    def set_data(self, inputs: Tensor, targets: Tensor):
-        inputs, targets, _ = self._check_args(inputs, targets)
-        self.gp.set_train_data(inputs, targets, strict=False)
-
-    def forward(self, inputs: Tensor, prior_mode=False):
-        inputs, _, batch_shape = self._check_args(inputs)
-        output_shape = batch_shape + (1,)
-
-        self.eval()
-        with gpytorch.settings.prior_mode(prior_mode):
-            f_dist = self.gp(inputs)
-        return f_dist.mean.view(output_shape)
-
-    def sample(self, inputs: Tensor, prior_mode=False):
-        inputs, _, batch_shape = self._check_args(inputs)
-        output_shape = batch_shape + (1,)
-
-        self.eval()
-        with gpytorch.settings.prior_mode(prior_mode):
-            f_dist = self.gp(inputs)
-        y_dist = self.gp.likelihood(f_dist.mean) if self.static else self.gp.likelihood(f_dist)
-        return y_dist.sample().view(output_shape)
-
-    def mll(self, inputs: Tensor, targets: Tensor, prior_mode=False, reduce=True):
-        inputs, targets, batch_shape = self._check_args(inputs, targets)
-        output_shape = batch_shape[:-1]
-        with gpytorch.settings.prior_mode(prior_mode):
-            f_dist = self.gp(inputs)
-
-        if self.static:
-            y_dist = self.gp.likelihood(f_dist.mean)
-            mlls = y_dist.log_prob(targets).squeeze(-1)
-        else:
-            y_dist = self.gp.likelihood(f_dist)
-            mlls = y_dist.log_prob(targets)
-        assert mlls.shape == output_shape, print(f'Invalid shape {mlls.shape}!')
-
-        if reduce:
-            return mlls.sum()
-        return mlls
-
-    def expected_noise_entropy(self, prior_mode: bool = False) -> Tensor:
-        # use point estimate with the MAP variance
-        posterior_hp = self.gp.posterior_hp
-        self.gp.select_hyperparameters(not prior_mode)
-        entropy = 0.5 * (2. * math.pi * self.gp.likelihood.noise * math.e).log().squeeze()
-        self.gp.select_hyperparameters(posterior_hp)
-        return entropy
-
-    def param_dict(self) -> Dict[str, Any]:
-        gp_param_dict = self.gp.param_dict()
-        params = {'in_size': self.in_size,
-                  'static': self.static,
-                  'gp_param_dict': gp_param_dict,
-                  'cfg_param_dict': self.cfg.param_dict()}
-
-        if self.static:
-            params['train_inputs'] = self.gp.train_inputs
-            params['train_targets'] = self.gp.train_targets
-        return params
-
-    def load_param_dict(self, param_dict):
-        self.cfg = GaussianProcessConfig()
-        self.cfg.load_param_dict(param_dict['cfg_param_dict'])
-        self.in_size = param_dict['in_size']
-        self.static = param_dict['static']
-
-        if self.cfg.kernel == 'linear':
-            self.gp = GaussianProcess.GaussianProcessLinearKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
-        elif self.cfg.kernel == 'rq':
-            self.gp = GaussianProcess.GaussianProcessRQKernel(self.in_size, self.cfg,
-                                                              param_dict=param_dict['gp_param_dict'])
-        elif self.cfg.kernel == 'additive-rq':
-            self.gp = GaussianProcess.GaussianProcessAdditiveRQKernel(self.in_size, self.cfg,
-                                                                      param_dict=param_dict['gp_param_dict'])
-        else:
-            raise NotImplementedError
-
-        if self.static:
-            train_inputs = param_dict['train_inputs'][0].float()
-            train_targets = param_dict['train_targets'].float()
-            self.set_data(train_inputs, train_targets)
 
 
 class SharedDataGaussianProcess(Mechanism):
@@ -1008,13 +612,8 @@ class SharedDataGaussianProcess(Mechanism):
         return y_dist.sample().view(output_shape)
 
     def mll(self, inputs: Tensor, targets: Tensor, key: str, prior_mode=False, reduce=True):
-        inputs, targets, batch_shape = self._check_args(inputs, targets)
-        output_shape = batch_shape[:-1]
-
         y_dist = self.get_ydist(inputs, key, prior_mode)
-
         mlls = y_dist.log_prob(targets)
-        assert mlls.shape == output_shape, print(f'Invalid shape {mlls.shape}!')
 
         if reduce:
             return mlls.sum()
@@ -1050,6 +649,118 @@ class SharedDataGaussianProcess(Mechanism):
             self.gp = SharedDataGaussianProcess.RFFKernel(self.cfg, param_dict=param_dict['gp_param_dict'])
         else:
             raise NotImplementedError
+
+
+class GaussianProcess(SharedDataGaussianProcess):
+    ##########################################################################
+    # Main-class functions
+    ##########################################################################
+    def __init__(self, in_size_or_key: [int, str], static=False, cfg: GaussianProcessConfig = None,
+                 param_dict: Dict[str, Any] = None):
+        if isinstance(in_size_or_key, int):
+            in_size = in_size_or_key
+            node_to_dim_map = {f'Dummy{idx}': idx for idx in range(in_size)}
+            self.key = get_mechanism_key(f'Dummy{in_size}', list(node_to_dim_map.keys()))
+        elif isinstance(in_size_or_key, str):
+            self.key = in_size_or_key
+            _, parents = resolve_mechanism_key(self.key)
+            in_size = len(parents)
+            node_to_dim_map = {pa: idx for pa, idx in enumerate(parents)}
+        else:
+            assert False, print(f'Invalid type for {in_size_or_key}')
+
+        super().__init__(in_size, node_to_dim_map, cfg, param_dict)
+        if param_dict is not None:
+            self.key = param_dict['key']
+            self.static = param_dict['static']
+
+            if self.static:
+                train_inputs = param_dict['train_inputs'][0].float()
+                train_targets = param_dict['train_targets'].float()
+                self.set_data(train_inputs, train_targets)
+        else:
+            self.init_kernel(self.key)
+            self.static = static
+            if static:
+                self.init_as_static()
+
+    def init_as_static(self):
+        # generate support points and sample training targets from the GP prior
+        num_train = self.cfg.num_support_points
+        spread = self.cfg.support_max - self.cfg.support_min
+        train_x = spread * torch.rand((num_train, self.in_size)) + self.cfg.support_min
+
+        # sample from GP prior
+        fdist = self.get_fdist(train_x, None, prior_mode=True)
+        ydist = self.gp.likelihoods[self.key](fdist)
+        train_y = ydist.sample()
+
+        # update GP data
+        self.set_data(train_x, train_y)
+
+    def init_hyperparams(self, key: str = None):
+        super().init_hyperparams(self.key)
+        self.gp.likelihood = self.gp.likelihoods[self.key]
+        self.gp._clear_cache()
+
+    def init_kernel(self, key: str = None):
+        self.gp.init_kernel(self.key)
+        self.init_hyperparams()
+
+    def activate(self, key: str = None):
+        if not self.exists(self.key):
+            self.init_kernel(self.key)
+
+    def hyperparam_log_prior(self, key: str = None):
+        return self.gp.hyperparam_log_prior(self.key)
+
+    def get_parameters(self, keys: List[str] = None):
+        return self.gp.get_parameters()
+
+    def get_fdist(self, inputs: Tensor, key: str = None, prior_mode=False):
+        return super().get_fdist(inputs, self.key, prior_mode)
+
+    def get_ydist(self, inputs: Tensor, key: str = None, prior_mode=False):
+        f_dist = self.get_fdist(inputs, key, prior_mode)
+        y_dist = self.gp.likelihood(f_dist.mean) if self.static else self.gp.likelihood(f_dist)
+        return y_dist
+
+    def forward(self, inputs: Tensor, key: str = None, prior_mode=False):
+        return super().forward(inputs, self.key, prior_mode)
+
+    def sample(self, inputs: Tensor, key: str = None, prior_mode=False):
+        return super().sample(inputs, self.key, prior_mode)
+
+    def mll(self, inputs: Tensor, targets: Tensor, key: str = None, prior_mode=False, reduce=True):
+        mlls = super().mll(inputs, targets, self.key, prior_mode, reduce)
+
+        if self.static and not reduce:
+            mlls.squeeze_(-1)
+
+        return mlls
+
+    def expected_noise_entropy(self, key: str = None) -> Tensor:
+        return super().expected_noise_entropy(self.key)
+
+    def param_dict(self) -> Dict[str, Any]:
+        params = super().param_dict()
+        params['key'] = self.key
+        params['static'] = self.static
+
+        if self.static:
+            params['train_inputs'] = self.gp.train_inputs
+            params['train_targets'] = self.gp.train_targets
+        return params
+
+    def load_param_dict(self, param_dict):
+        super().load_param_dict(param_dict)
+        self.key = param_dict['key']
+        self.static = param_dict['static']
+
+        if self.static:
+            train_inputs = param_dict['train_inputs'][0].float()
+            train_targets = param_dict['train_targets'].float()
+            self.set_data(train_inputs, train_targets)
 
 
 class AdditiveSigmoids(Mechanism):
