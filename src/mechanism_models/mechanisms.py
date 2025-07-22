@@ -768,7 +768,6 @@ class AdditiveSigmoids(Mechanism):
     Static mechanism for generating ground truth environments as suggested in Buhlmann, P., Peters, J., and Ernest, J.
     "CAM: Causal additive models, high-dimensional order search and penalized regression." Annals of Statistics, 2014.
     '''
-    noise: Tensor
     outscales: Tensor
     lengthscales: Tensor
     offsets: Tensor
@@ -783,7 +782,8 @@ class AdditiveSigmoids(Mechanism):
 
             # init hp priors
             # ATTENTION: do not name the HP priors "noise_prior"
-            self.noise_var_prior = dist.Gamma(self.cfg.noise_var_concentration, self.cfg.noise_var_rate)
+            noise_rate = self.cfg.noise_var_rate * math.sqrt(self.in_size)  # to balance SNR in higher dim
+            self.noise_var_prior = dist.Gamma(self.cfg.noise_var_concentration, noise_rate)
             self.outscale_prior = dist.Gamma(self.cfg.outscale_concentration, self.cfg.outscale_rate)
             self.lscale_prior = dist.Uniform(self.cfg.lscale_lower, self.cfg.lscale_upper)
             self.offset_prior = dist.Uniform(self.cfg.offset_lower, self.cfg.offset_upper)
@@ -791,24 +791,28 @@ class AdditiveSigmoids(Mechanism):
 
             # initialize likelihood and parameters
             self.init_hyperparams()
+            self.eval()
 
     def init_hyperparams(self):
         noise_var = self.noise_var_prior.sample()
-        self.noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
+        self.likelihood.noise = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
         self.outscales = self.outscale_prior.sample(Size((self.in_size,)))
-        if torch.rand(1).round():
-            self.outscales = -self.outscales
-        self.lengthscales = self.lscale_prior.sample(Size((self.in_size,)))
+        sign_flips = torch.rand(self.in_size).round() * 2. - 1.
+        self.lengthscales = self.lscale_prior.sample(Size((self.in_size,))) * sign_flips
         self.offsets = self.offset_prior.sample(Size((self.in_size,)))
+
+    def get_ydist(self, inputs: Tensor, prior_mode=False):
+        means = self(inputs)
+        y_dist = self.likelihood(means)
+        return y_dist
 
     def forward(self, inputs: Tensor, prior_mode=False):
         inputs, _, batch_shape = self._check_args(inputs)
         output_shape = batch_shape + (1,)
 
-        self.eval()
         tmp = self.lengthscales * (inputs + self.offsets)
         components = self.outscales * tmp / (1. + tmp.abs())
-        outputs = components.sum(dim=-1, keepdim=True)
+        outputs = components.sum(dim=-1, keepdim=True) / math.sqrt(self.in_size)
         assert outputs.shape == output_shape, print(outputs.shape)
         return outputs
 
@@ -816,16 +820,15 @@ class AdditiveSigmoids(Mechanism):
         inputs, _, batch_shape = self._check_args(inputs)
         output_shape = batch_shape + (1,)
 
-        means = self(inputs)
-        y_dist = self.likelihood(means)
+        y_dist = self.get_ydist(inputs, prior_mode)
         return y_dist.sample().view(output_shape)
 
-    def mll(self, inputs: Tensor, targets: Tensor, reduce=True):
+    def mll(self, inputs: Tensor, targets: Tensor, prior_mode=False, reduce=True):
+        # this does not actually compute the MLL; naming for interface reasons
         inputs, targets, batch_shape = self._check_args(inputs, targets)
         output_shape = batch_shape[:-1]
 
-        means = self(inputs)
-        y_dist = self.likelihood(means)
+        y_dist = self.get_ydist(inputs, prior_mode)
         mlls = y_dist.log_prob(targets).squeeze(-1)
         assert mlls.shape == output_shape, print(f'Invalid shape {mlls.shape} vs. {output_shape}!')
 
@@ -835,7 +838,7 @@ class AdditiveSigmoids(Mechanism):
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'in_size': self.in_size,
-                  'noise': self.noise,
+                  'noise': self.likelihood.noise,
                   'outscales': self.outscales,
                   'lengthscales': self.lengthscales,
                   'offsets': self.offsets,
@@ -847,7 +850,7 @@ class AdditiveSigmoids(Mechanism):
         self.cfg = AdditiveSigmoidsConfig()
         self.cfg.load_param_dict(param_dict['cfg_param_dict'])
         self.in_size = param_dict['in_size']
-        self.noise = param_dict['noise']
+        self.likelihood.noise = param_dict['noise']
         self.outscales = param_dict['outscales']
         self.lengthscales = param_dict['lengthscales']
         self.offsets = param_dict['offsets']
