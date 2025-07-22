@@ -12,10 +12,11 @@ from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.means import ZeroMean, ConstantMean
 from gpytorch.models import ExactGP
 from torch import Tensor, Size
-from torch.nn import Module, ModuleDict
+from torch.nn import Module, ModuleDict, Parameter, ParameterDict, Sequential, Linear, ReLU, Softplus
+from torch.nn.functional import softplus
 from torch.nn.utils import vector_to_parameters
 
-from src.config import GaussianRootNodeConfig, GaussianProcessConfig, AdditiveSigmoidsConfig
+from src.config import GaussianRootNodeConfig, GaussianProcessConfig, AdditiveSigmoidsConfig, MLPConfig
 from src.utils.utils import get_module_params
 
 
@@ -854,3 +855,74 @@ class AdditiveSigmoids(Mechanism):
         self.outscales = param_dict['outscales']
         self.lengthscales = param_dict['lengthscales']
         self.offsets = param_dict['offsets']
+
+
+class MLP(Mechanism):
+    mlp: Sequential
+    noise_std: Tensor
+
+    def __init__(self, in_size: int, cfg: MLPConfig = None, param_dict: Dict[str, Any] = None):
+        super().__init__(in_size)
+        if param_dict is not None:
+            self.load_param_dict(param_dict)
+        else:
+            # load config
+            self.cfg = MLPConfig() if cfg is None else cfg
+
+            self.init_mlp()
+            self.init_hyperparams()
+            self.eval()
+
+    def init_mlp(self):
+        assert len(self.cfg.hidden_layer_sizes) > 0
+        # adding an input dim for the exogenous noise
+        self.mlp = Sequential(Linear(self.in_size + 1, self.cfg.hidden_layer_sizes[0]), self.cfg.activation())
+        for sidx, size in enumerate(self.cfg.hidden_layer_sizes[1:]):
+            self.mlp.append(Linear(self.cfg.hidden_layer_sizes[sidx], size))
+            self.mlp.append(self.cfg.activation())
+        self.mlp.append(Linear(self.cfg.hidden_layer_sizes[-1], 1))
+
+    def init_hyperparams(self):
+        noise_var_prior = dist.Gamma(self.cfg.noise_var_concentration, self.cfg.noise_var_rate)
+        noise_var = noise_var_prior.sample()
+        noise_var = noise_var if noise_var > 1e-3 else torch.tensor(1e-3)
+        self.noise_std = noise_var.sqrt()
+
+    def forward(self, inputs: Tensor, noise: Tensor, prior_mode=False):
+        inputs, _, batch_shape = self._check_args(inputs)
+        output_shape = batch_shape + (1,)
+
+        assert noise.shape[-1] == 1, print(noise.shape)
+        if noise.dim() == 1:
+            noise = noise.view(1, 1, -1).expand_as(inputs)
+        else:
+            assert noise.shape[:-1] == batch_shape, print(noise.shape)
+
+        x = torch.cat((inputs, noise), dim=-1)
+        outputs = self.mlp(x * (math.sqrt(self.in_size) + 1.)) * torch.tensor(2. + self.in_size).log() * 10
+        assert outputs.shape == output_shape, print(outputs.shape)
+        return outputs
+
+    def sample(self, inputs: Tensor, prior_mode=False):
+        inputs, _, batch_shape = self._check_args(inputs)
+        output_shape = batch_shape + (1,)
+
+        noise = torch.randn(batch_shape).unsqueeze(-1) * self.noise_std
+        samples = self(inputs, noise, prior_mode)
+        return samples.view(output_shape)
+
+    def param_dict(self) -> Dict[str, Any]:
+        params = {'in_size': self.in_size,
+                  'noise_std': self.noise_std,
+                  'mlp_state_dict': self.mlp.state_dict(),
+                  'cfg_param_dict': self.cfg.param_dict()}
+
+        return params
+
+    def load_param_dict(self, param_dict):
+        self.cfg = MLPConfig()
+        self.cfg.load_param_dict(param_dict['cfg_param_dict'])
+        self.in_size = param_dict['in_size']
+        self.noise_std = param_dict['noise_std']
+        self.init_mlp()
+        self.mlp.load_state_dict(param_dict['mlp_state_dict'])

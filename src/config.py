@@ -1,5 +1,7 @@
 from typing import List, Tuple, Dict, Any, Optional
 
+import torch.nn
+
 from src.environments.experiment import InterventionalDistributionsQuery
 
 
@@ -79,8 +81,8 @@ class GaussianRootNodeConfig:
 
 class AdditiveSigmoidsConfig:
     # prior hyperparameters
-    noise_var_concentration: float = 50.
-    noise_var_rate: float = 50.
+    noise_var_concentration: float = 5.
+    noise_var_rate: float = 5.
     lscale_lower: float = 0.5
     lscale_upper: float = 2.
     offset_lower: float = -2.
@@ -110,6 +112,29 @@ class AdditiveSigmoidsConfig:
         self.outscale_concentration = param_dict['outscale_concentration']
 
 
+class MLPConfig:
+    hidden_layer_sizes: List[int] = [100, 100]
+    activation: torch.nn.Module = torch.nn.Sigmoid
+
+    # prior hyperparameters
+    noise_var_concentration: float = 100.
+    noise_var_rate: float = 10.
+
+    def param_dict(self) -> Dict[str, Any]:
+        params = {'hidden_layer_sizes': self.hidden_layer_sizes,
+                  'activation': self.activation,
+                  'noise_var_concentration': self.noise_var_concentration,
+                  'noise_var_rate': self.noise_var_rate}
+        return params
+
+    def load_param_dict(self, param_dict):
+        self.hidden_layer_sizes = param_dict['hidden_layer_sizes']
+        self.activation = param_dict['activation']
+
+        self.noise_var_concentration = param_dict['noise_var_concentration']
+        self.noise_var_rate = param_dict['noise_var_rate']
+
+
 class GaussianProcessConfig:
     # general setup
     per_dim_lenghtscale: bool = True
@@ -126,28 +151,28 @@ class GaussianProcessConfig:
     support_max: float = 10.
 
     # hyper-prior params for ground-truth model generation
-    # noise_var_concentration: float = 50.
-    # noise_var_rate: float = 50.
-    # outscale_concentration: float = 100.
-    # outscale_rate: float = 10.
-    # lscale_concentration_multiplier: float = 30.
-    # lscale_rate: float = 30.
-    # scale_mix_concentration: float = 20.
-    # scale_mix_rate: float = 10.
-    # offset_loc: float = 0.
-    # offset_scale: float = 3.
-
-    # hyper-prior params for inference (normalised data)
-    noise_var_concentration: float = 2.
-    noise_var_rate: float = 8.
-    outscale_concentration: float = 5.
-    outscale_rate: float = 1.
+    noise_var_concentration: float = 50.
+    noise_var_rate: float = 50.
+    outscale_concentration: float = 100.
+    outscale_rate: float = 10.
     lscale_concentration_multiplier: float = 30.
     lscale_rate: float = 30.
     scale_mix_concentration: float = 20.
     scale_mix_rate: float = 10.
     offset_loc: float = 0.
-    offset_scale: float = 0.5
+    offset_scale: float = 3.
+
+    # hyper-prior params for inference (normalised data)
+    # noise_var_concentration: float = 2.
+    # noise_var_rate: float = 8.
+    # outscale_concentration: float = 5.
+    # outscale_rate: float = 1.
+    # lscale_concentration_multiplier: float = 30.
+    # lscale_rate: float = 30.
+    # scale_mix_concentration: float = 20.
+    # scale_mix_rate: float = 10.
+    # offset_loc: float = 0.
+    # offset_scale: float = 0.5
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'per_dim_lenghtscale': self.per_dim_lenghtscale,
