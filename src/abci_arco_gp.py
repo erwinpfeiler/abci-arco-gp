@@ -15,6 +15,8 @@ from src.utils.graphs import dag_to_cpdag, adj_mat_to_graph
 from src.utils.metrics import aid, compute_structure_metrics, mmd
 from src.utils.utils import inf_tensor
 
+from src.experimental_desisgn.exp_designer_abci_arco_gp import ExpDesignerABCIArCOGP
+
 
 class ABCIArCOGP(ABCIBase):
     cfg: ABCIArCOGPConfig
@@ -43,9 +45,13 @@ class ABCIArCOGP(ABCIBase):
         self.co_weights: Optional[torch.Tensor] = None  # shape (num_mc_cos, num_nodes)
 
     def experiment_designer_factory(self):
-        raise NotImplementedError
+        distributed = self.num_workers > 1
+        return ExpDesignerABCIArCOGP(self.env.intervention_bounds, opt_strategy='gp-ucb',
+                                     distributed=distributed)
 
     def run(self):
+        print(f"NOw running ARCO GP with policy = {self.cfg.policy}")
+        print(f"There are {self.cfg.num_experiments} planned experiments")
         for epoch in range(self.cfg.num_experiments):
             # pick intervention/data according to policy
             if self.cfg.policy == 'static-obs-dataset':
@@ -76,8 +82,39 @@ class ABCIArCOGP(ABCIBase):
                     interventions = self.get_random_intervention()
                 elif self.cfg.policy == 'random-fixed-value':
                     interventions = self.get_random_intervention(0.)
-                else:
-                    assert False, print(f'Invalid policy {self.cfg.policy}!')
+                else: #some active learning policy
+                    if self.cfg.policy == 'graph-info-gain':
+                        #copied from DiBS:
+                        # sample mc graphs
+                        outer_mc_graphs, _ = self.sample_mc_graphs(set_data=True, num_graphs=5, only_dags=False)
+                        inner_mc_graphs, _ = self.sample_mc_graphs(set_data=True, num_graphs=30, only_dags=False)
+                        with torch.no_grad():
+                            log_inner_graph_weights, log_inner_particle_weights = self.compute_importance_weights(
+                                inner_mc_graphs, use_cache=True, log_weights=True)
+                            outer_graph_weights, outer_particle_weights = self.compute_importance_weights(outer_mc_graphs,
+                                                                                                          use_cache=True)
+
+                        graphs = [g for glist in inner_mc_graphs for g in glist]
+                        graphs += [g for glist in outer_mc_graphs for g in glist]
+                        args = {'mechanism_model': self.mechanism_model.submodel(graphs),
+                                'inner_mc_graphs': inner_mc_graphs,
+                                'log_inner_graph_weights': log_inner_graph_weights,
+                                'log_inner_particle_weights': log_inner_particle_weights,
+                                'outer_mc_graphs': outer_mc_graphs,
+                                'outer_graph_weights': outer_graph_weights,
+                                'outer_particle_weights': outer_particle_weights,
+                                'batch_size': batch_size,
+                                'num_exp_per_graph': 100,
+                                'policy': self.policy}
+                    else:
+                        assert False, print(f'Invalid policy {self.cfg.policy}!')
+                        
+                    if self.num_workers > 1: # ignore this case for now
+                        interventions, info_gain = self.design_experiment_distributed(args)
+                    else:
+                        designer = self.experiment_designer_factory()
+                        designer.init_design_process(args)
+                        interventions, info_gain = designer.get_best_experiment(self.env.intervenable_nodes)
 
                 # perform experiment
                 num_experiments_conducted = len(self.experiments)
