@@ -557,6 +557,9 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     arco_lr: float = 1e-2  # co model optimizer learning rate
     arco_es_min_steps: int = 50  # minimum number of gradient steps to perform before checking early stopping
 
+    # active learning
+    batch_size = 100
+
     @classmethod
     def check_policy(cls, policy: str):
         assert policy in {'observational', 'random', 'random-fixed-value', 'static-obs-dataset',

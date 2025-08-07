@@ -86,17 +86,7 @@ class GraphPosteriorArCO:
         logp_tensor = logp_tensor - torch.logsumexp(logp_tensor, dim=0)
         return graphs, logp_tensor
 
-###############################################################################
-# Designer class                                                              #
-###############################################################################
-
 class ExpDesignerABCIArCOGP(ExpDesignerBase):
-    """Active‑learning designer for ARCO‑GP *(causal discovery only)*.
-
-    Interface and control‑flow mirror ``ExpDesignerABCIDiBSGP`` so that
-    ``active_bayesian_causal_inference.py`` can instantiate either
-    designer without branching logic.
-    """
 
     def __init__(
         self,
@@ -109,13 +99,9 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         self.mech_model: Optional[SharedDataGaussianProcessModel] = None
         self.graph_posterior: Optional[GraphPosteriorArCO] = None
 
-    # ------------------------------------------------------------------
-    # Initialisation hook (same name/signature as DiBS designer)         
-    # ------------------------------------------------------------------
     def init_design_process(self, args: dict):
         """Called once by the ABCI main loop right before the first query.
 
-        Expected ``args`` keys (identical to DiBS designer):
             * 'mechanism_model' : SharedDataGaussianProcessModel
             * 'order_model'     : ArCO
             * 'policy'          : str – must be 'graph-info-gain'
@@ -125,7 +111,6 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         arco_model: ArCO = args["order_model"]
         self.graph_posterior = GraphPosteriorArCO(arco_model, self.mech_model)
 
-        # chooser identical to DiBS designer – here only graph IG supported
         assert args["policy"] == "graph-info-gain", (
             "ARCO designer currently supports only 'graph-info-gain'."
         )

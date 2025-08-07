@@ -15,7 +15,7 @@ from src.utils.graphs import dag_to_cpdag, adj_mat_to_graph
 from src.utils.metrics import aid, compute_structure_metrics, mmd
 from src.utils.utils import inf_tensor
 
-from src.experimental_desisgn.exp_designer_abci_arco_gp import ExpDesignerABCIArCOGP
+from src.experimental_design.exp_designer_abci_arco_gp import ExpDesignerABCIArCOGP
 
 
 class ABCIArCOGP(ABCIBase):
@@ -23,6 +23,20 @@ class ABCIArCOGP(ABCIBase):
 
     def __init__(self, env: Environment = None, cfg: ABCIArCOGPConfig = None,
                  param_dict: Dict[str, Any] = None):
+        """
+        Initialize the ARCO-GP agent. Either loads from a saved `param_dict` or
+        constructs fresh models.
+
+        Args:
+            env (Environment, optional): The SCM/environment to interact with.
+            cfg (ABCIArCOGPConfig, optional): Configuration parameters (num_experiments,
+                learning rates, etc.).
+            param_dict (Dict[str, Any], optional): Previously saved state dict to
+                restore (overrides env/cfg).
+
+        Returns:
+            None
+        """
         assert env is not None or param_dict is not None
         if param_dict is not None:
             num_workers = param_dict['cfg_param_dict']['num_workers']
@@ -45,11 +59,36 @@ class ABCIArCOGP(ABCIBase):
         self.co_weights: Optional[torch.Tensor] = None  # shape (num_mc_cos, num_nodes)
 
     def experiment_designer_factory(self):
+        """
+        Build and return the experiment‐designer object responsible for
+        selecting the next intervention via graph‐info‐gain.
+
+        Args:
+            None
+
+        Returns:
+            ExpDesignerABCIArCOGP: An object implementing `init_design_process`
+            and `get_best_experiment`.
+        """
         distributed = self.num_workers > 1
         return ExpDesignerABCIArCOGP(self.env.intervention_bounds, opt_strategy='gp-ucb',
                                      distributed=distributed)
 
     def run(self):
+        """
+        Main loop over all planned experiments:
+         1. Design or load data depending on policy
+         2. Query the environment
+         3. Clear caches
+         4. Update the causal‐order model
+         5. Checkpoint and log statistics
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         print(f"NOw running ARCO GP with policy = {self.cfg.policy}")
         print(f"There are {self.cfg.num_experiments} planned experiments")
         for epoch in range(self.cfg.num_experiments):
@@ -82,30 +121,17 @@ class ABCIArCOGP(ABCIBase):
                     interventions = self.get_random_intervention()
                 elif self.cfg.policy == 'random-fixed-value':
                     interventions = self.get_random_intervention(0.)
-                else: #some active learning policy
+                else:
                     if self.cfg.policy == 'graph-info-gain':
-                        #copied from DiBS:
-                        # sample mc graphs
-                        outer_mc_graphs, _ = self.sample_mc_graphs(set_data=True, num_graphs=5, only_dags=False)
-                        inner_mc_graphs, _ = self.sample_mc_graphs(set_data=True, num_graphs=30, only_dags=False)
-                        with torch.no_grad():
-                            log_inner_graph_weights, log_inner_particle_weights = self.compute_importance_weights(
-                                inner_mc_graphs, use_cache=True, log_weights=True)
-                            outer_graph_weights, outer_particle_weights = self.compute_importance_weights(outer_mc_graphs,
-                                                                                                          use_cache=True)
-
-                        graphs = [g for glist in inner_mc_graphs for g in glist]
-                        graphs += [g for glist in outer_mc_graphs for g in glist]
-                        args = {'mechanism_model': self.mechanism_model.submodel(graphs),
-                                'inner_mc_graphs': inner_mc_graphs,
-                                'log_inner_graph_weights': log_inner_graph_weights,
-                                'log_inner_particle_weights': log_inner_particle_weights,
-                                'outer_mc_graphs': outer_mc_graphs,
-                                'outer_graph_weights': outer_graph_weights,
-                                'outer_particle_weights': outer_particle_weights,
-                                'batch_size': batch_size,
-                                'num_exp_per_graph': 100,
-                                'policy': self.policy}
+                        print(f"got GIG policy ")
+                        batch_size = self.cfg.batch_size          # for the synthetic roll-out
+                        args = {
+                            'mechanism_model'    : self.mechanism_model,   # full GP model
+                            'order_model'        : self.co_model,          # trained ArCO model
+                            'policy'             : 'graph-info-gain',
+                            'batch_size'         : batch_size,
+                            'num_exp_per_graph'  : 100                     # same constant you used before
+                        }
                     else:
                         assert False, print(f'Invalid policy {self.cfg.policy}!')
                         
@@ -150,6 +176,16 @@ class ABCIArCOGP(ABCIBase):
                       f'A-AID is {self.stats["aaid"][-1].item():.2f}', flush=True)
 
     def update_co_model(self):
+        """
+        Optimise the ArCO causal‐order model parameters θ by score‐function
+        gradients using Monte Carlo samples of orders and their weights.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         print(f'Optimising causal order model...', flush=True)
         arco_optimizer = torch.optim.Adam(self.co_model.parameters(), lr=self.cfg.arco_lr)
         co_baselines = [torch.tensor(0.)]
@@ -185,6 +221,19 @@ class ABCIArCOGP(ABCIBase):
                 print(f'Step {step + 1} of {self.cfg.num_arco_steps}, com loss is {arco_loss.item()}', flush=True)
 
     def sample_mc_cos(self, set_data=False, num_cos: int = None):
+        """
+        Sample a batch of causal orders and compute their log‐weights.
+
+        Args:
+            set_data (bool): If True, only sets data in the GP model but
+                does not re‐optimise hyperparameters.
+            num_cos (int, optional): Number of orders to sample (defaults to cfg).
+
+        Returns:
+            mc_cos (List[CausalOrder]): Sampled causal‐order objects
+            mc_adj_masks (torch.Tensor): Corresponding adjacency‐masks,
+                shape (num_cos, num_nodes)
+        """
         num_cos = self.cfg.num_mc_cos if num_cos is None else num_cos
 
         with torch.no_grad():
@@ -245,6 +294,20 @@ class ABCIArCOGP(ABCIBase):
         return mc_cos, mc_adj_masks
 
     def sample_mc_graphs(self, mc_cos: List[CausalOrder], mc_adj_masks: torch.Tensor, num_mc_graphs: int = None):
+        """
+        Given sampled orders, draw graphs by sampling parent‐sets for each node
+        according to the mechanism‐posterior logits.
+
+        Args:
+            mc_cos (List[CausalOrder]): Causal‐order samples.
+            mc_adj_masks (torch.Tensor): Adjacency masks from orders.
+            num_mc_graphs (int, optional): Number of graphs per order
+                (defaults to cfg).
+
+        Returns:
+            mc_adj_mats (torch.Tensor): Adjacency matrices of shape
+                (num_cos, num_mc_graphs, num_nodes, num_nodes)
+        """
         num_mc_graphs = self.cfg.num_mc_graphs if num_mc_graphs is None else num_mc_graphs
 
         mc_adj_mats = torch.zeros(len(mc_cos), num_mc_graphs, self.env.num_nodes, self.env.num_nodes)
@@ -267,6 +330,18 @@ class ABCIArCOGP(ABCIBase):
     def graph_posterior_expectation_additive(self, func: Callable[[str, List[str]], torch.Tensor],
                                              mc_cos: List[CausalOrder],
                                              logspace=False):
+        """
+        Compute E[ sum_i f(i, Pa_i) ] under the posterior over (orders, parent‐sets)
+        in closed form (additive queries).
+
+        Args:
+            func: Maps (node_label, parent_list) → tensor value for that node.
+            mc_cos: Sampled causal orders.
+            logspace: If True, perform computations in log‐space.
+
+        Returns:
+            Tensor: Scalar expectation of the additive query.
+        """
         num_cos = len(mc_cos)
         co_values = torch.zeros(num_cos, self.env.num_nodes)
         for cidx, co in enumerate(mc_cos):
@@ -297,6 +372,19 @@ class ABCIArCOGP(ABCIBase):
     def graph_posterior_expectation_factorising(self, func: Callable[[str, List[str]], torch.Tensor],
                                                 mc_cos: List[CausalOrder],
                                                 logspace=False):
+        """
+        Compute E[ ∏_i f(i, Pa_i) ] under the posterior over (orders, parent‐sets)
+        in closed form (factorising queries).
+
+        Args:
+            func: Maps (node_label, parent_list) → tensor value for that node.
+            mc_cos: Sampled causal orders.
+            logspace: If True, perform computations in log‐space.
+
+        Returns:
+            Tensor: Scalar expectation of the factorising query.
+        """
+
         num_cos = len(mc_cos)
         if logspace:
             co_values = torch.zeros(num_cos)
@@ -330,7 +418,19 @@ class ABCIArCOGP(ABCIBase):
     def graph_posterior_expectation_mc(self, func: Callable[[torch.Tensor], torch.Tensor],
                                        mc_cos: List[CausalOrder] = None, mc_adj_mats: torch.Tensor = None,
                                        logspace=False):
+        """
+        Monte Carlo estimate of E[ f(G) ] under the posterior over graphs,
+        by sampling orders then graphs.
 
+        Args:
+            func: Function applied to each adjacency matrix (shape → tensor).
+            mc_cos (List[CausalOrder], optional): Pre‐sampled orders.
+            mc_adj_mats (torch.Tensor], optional): Pre‐sampled graphs.
+            logspace (bool): If True, combine in log‐space.
+
+        Returns:
+            Tensor: Expectation of f under p(G|D).
+        """
         if mc_cos is None and mc_adj_mats is None:
             mc_cos, _ = self.sample_mc_cos(set_data=True)
 
@@ -365,6 +465,16 @@ class ABCIArCOGP(ABCIBase):
 
     def co_posterior_expectation(self, func: Callable[[CausalOrder], torch.Tensor],
                                  mc_cos: List[CausalOrder]):
+        """
+        Compute E[ f(L) ] under the posterior over causal orders only.
+
+        Args:
+            func: Function applied to each sampled CausalOrder.
+            mc_cos: List of sampled causal orders.
+
+        Returns:
+            Tensor: Expectation of f under p(L|D).
+        """
         num_cos = len(mc_cos)
 
         # compute function values
@@ -378,6 +488,16 @@ class ABCIArCOGP(ABCIBase):
         return expected_value
 
     def compute_posterior_edge_probs(self, mc_cos: List[CausalOrder]):
+        """
+        Compute marginal posterior probabilities for each directed edge i→j
+        by summing over orders and parent‐sets.
+
+        Args:
+            mc_cos: Sampled causal orders.
+
+        Returns:
+            Tensor of shape (num_nodes, num_nodes) with edge probabilities.
+        """
         log_probs = -torch.ones(len(mc_cos), self.env.num_nodes, self.env.num_nodes) * inf_tensor()
         for cidx, co in enumerate(mc_cos):
             parent_sets = self.generate_co_parent_sets(co)
@@ -400,6 +520,20 @@ class ABCIArCOGP(ABCIBase):
 
     def estimate_ace(self, target: str, interventions: dict, num_samples: int, mc_cos: List[CausalOrder] = None,
                      mc_adj_mats: torch.Tensor = None) -> torch.Tensor:
+        """
+        Estimate the average causal effect (ACE) of `target` under given interventions,
+        by MC over graphs.
+
+        Args:
+            target (str): Node label whose ACE to estimate.
+            interventions (dict): Intervention targets→values.
+            num_samples (int): Samples per graph.
+            mc_cos (List[CausalOrder], optional): Pre‐sampled orders.
+            mc_adj_mats (torch.Tensor, optional): Pre‐sampled graphs.
+
+        Returns:
+            Tensor: Estimated ACE (scalar).
+        """
         def ate_wrapper(adj_mat: torch.Tensor):
             graph = adj_mat_to_graph(adj_mat, self.mechanism_model.node_labels)
             self.mechanism_model.init_topological_order(graph, self.sample_time)
@@ -410,6 +544,19 @@ class ABCIArCOGP(ABCIBase):
 
     def estimate_aces(self, interventions: dict, num_samples: int, mc_cos: List[CausalOrder] = None,
                       mc_adj_mats: torch.Tensor = None) -> torch.Tensor:
+        """
+        Estimate multiple average causal effects (ACES) vector‐valued for all nodes
+        under given interventions, via MC over graphs.
+
+        Args:
+            interventions (dict): Intervention targets→values.
+            num_samples (int): Samples per graph.
+            mc_cos (List[CausalOrder], optional): Pre‐sampled orders.
+            mc_adj_mats (torch.Tensor, optional): Pre‐sampled graphs.
+
+        Returns:
+            Tensor: Vector of ACES, one per node.
+        """
         def ace_wrapper(adj_mat: torch.Tensor):
             graph = adj_mat_to_graph(adj_mat, self.mechanism_model.node_labels)
             self.mechanism_model.init_topological_order(graph, self.sample_time)
@@ -419,6 +566,19 @@ class ABCIArCOGP(ABCIBase):
         return aces
 
     def sample(self, interventions: dict, num_samples_per_graph: int, adj_mats: torch.Tensor = None):
+        """
+        Sample synthetic data under interventions from the current posterior
+        over (orders, graphs), returning per-node samples and importance weights.
+
+        Args:
+            interventions (dict): Intervention targets→values.
+            num_samples_per_graph (int): Samples per graph draw.
+            adj_mats (torch.Tensor, optional): Pre‐sampled graphs.
+
+        Returns:
+            samples (Dict[str, Tensor]): Node→flattened samples tensor.
+            weights (Tensor): Corresponding importance weights.
+        """
         if adj_mats is None:
             mc_cos, mc_adj_masks = self.sample_mc_cos(set_data=True, num_cos=self.cfg.num_mc_cos)
             adj_mats = self.sample_mc_graphs(mc_cos, mc_adj_masks, num_mc_graphs=self.cfg.num_mc_graphs)
@@ -447,6 +607,20 @@ class ABCIArCOGP(ABCIBase):
         return samples, weights
 
     def sample_ace(self, target: str, interventions: dict, num_samples: int, adj_mats: torch.Tensor):
+        """
+        Sample raw ACE draws for `target` under given interventions across
+        a fixed set of adjacency matrices.
+
+        Args:
+            target (str): Node label.
+            interventions (dict): Intervention targets→values.
+            num_samples (int): Number of ACE samples per graph.
+            adj_mats (torch.Tensor): Adjacency matrices (num_cos×num_graphs×d×d).
+
+        Returns:
+            ates (Tensor): Flattened ACE draws.
+            weights (Tensor): Corresponding weights.
+        """
         num_cos, num_graphs = adj_mats.shape[0:2]
         ates = torch.zeros(num_cos, num_graphs, num_samples)
 
@@ -464,10 +638,31 @@ class ABCIArCOGP(ABCIBase):
         return ates.view(-1), weights
 
     def generate_co_parent_sets(self, co: Union[CausalOrder, torch.Tensor]):
+        """
+        Enumerate all valid parent‐sets for each node given a causal‐order mask
+        (or CausalOrder object), up to max parent‐set size.
+
+        Args:
+            co (CausalOrder or torch.Tensor): Order object or its adjacency mask.
+
+        Returns:
+            Dict mapping node label → list of admissible parent‐sets (each a list).
+        """
         adj_mask = co.get_adjacency_mask() if isinstance(co, CausalOrder) else co
         return generate_all_parent_sets(self.env.node_labels, self.cfg.max_ps_size, adj_mask)
 
     def compute_stats(self):
+        """
+        After checkpointing, re‐sample orders/graphs and compute a suite of
+        structure‐learning (SHD/AUROC/AUPRC) and distributional (AID/MMD) metrics,
+        recording them in self.stats.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         mc_cos, mc_adj_masks = self.sample_mc_cos(set_data=True)
 
         # compute posterior edge probs
@@ -571,6 +766,16 @@ class ABCIArCOGP(ABCIBase):
                 print(f'Average distribution mean L2 distance is {dmse}')
 
     def param_dict(self) -> Dict[str, Any]:
+        """
+        Serialize full model state (order‐model, mechanism model, cfg) into a dict
+        suitable for saving.
+
+        Args:
+            None
+
+        Returns:
+            Dict[str, Any]: All parameters and model state.
+        """
         params = super().param_dict()
         params.update({'mechanism_model_params': self.mechanism_model.param_dict(),
                        'co_model_params': self.co_model.param_dict(),
@@ -578,6 +783,15 @@ class ABCIArCOGP(ABCIBase):
         return params
 
     def load_param_dict(self, param_dict):
+        """
+        Restore agent state from a previously saved param_dict.
+
+        Args:
+            param_dict (Dict[str, Any]): State dict from `param_dict()`.
+
+        Returns:
+            None
+        """
         super().load_param_dict(param_dict)
         self.cfg = ABCIArCOGPConfig(param_dict['cfg_param_dict'])
         self.co_model = ArCO(param_dict=param_dict['co_model_params'])
@@ -588,5 +802,14 @@ class ABCIArCOGP(ABCIBase):
 
     @classmethod
     def load(cls, path):
+        """
+        Load an ARCO‐GP agent from disk.
+
+        Args:
+            path (str): File path to a saved Torch checkpoint.
+
+        Returns:
+            ABCIArCOGP: Restored agent instance.
+        """
         param_dict = torch.load(path)
         return ABCIArCOGP(param_dict=param_dict)

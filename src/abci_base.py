@@ -26,6 +26,7 @@ class ABCIBase:
         # init distributed experiment design
         self.designed_experiments = {}
         self.open_targets = set()
+        self.num_workers = num_workers # added by erwin
         if num_workers > 1:
             self.worker_id = rpc.get_worker_info().id
             if self.worker_id == 0:
