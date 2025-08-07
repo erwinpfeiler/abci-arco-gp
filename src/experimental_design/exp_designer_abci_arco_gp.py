@@ -1,19 +1,3 @@
-"""exp_designer_abci_arco_gp.py
-================================================
-Experiment‑designer for **ARCO‑GP** (Active Bayesian Causal Inference)
---------------------------------------------------------------------
-Implements *causal‑discovery* information gain (Eq. 4.13, ABCI paper)
-using the same class interface and coding style as
-``exp_designer_abci_dibs_gp.py`` so it can be dropped into the existing
-pipeline without touching client code.
-
-Key references used in comments
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-* ABCI paper Eq. 4.13  –  causal‑discovery utility.
-* ARCO‑GP paper Eq. (4) –  importance weight *w_L*.
-* ARCO‑GP paper §4.4   –  closed‑form GP marginal likelihood & predictive.
-* Previous derivations  –  fully expanded U_CD (message ★).
-"""
 
 from __future__ import annotations
 
@@ -28,66 +12,9 @@ from src.mechanism_models.shared_data_gp_model import (
     SharedDataGaussianProcessModel,
 )
 from src.graph_models.arco import ArCO  # auto‑regressive causal‑order model
-
-###############################################################################
-# Helper classes                                                              #
-###############################################################################
-
-class GraphPosteriorArCO:
-    """Adapter that turns an **ARCO** order posterior into a *graph* posterior.
-
-    The ABCI designer only needs a list of graphs and their log posterior
-    probabilities.  We obtain those by
-
-    1. sampling causal orders L ~ p(L|θ),
-    2. enumerating *all* DAGs G respecting L with ≤K parents each,
-    3. evaluating the (closed‑form) marginal likelihood p(D|G,ψ) and
-       normalising across all sampled graphs to approximate p(G|D).
-    """
-
-    def __init__(
-        self,
-        arco: ArCO,
-        mech_model: SharedDataGaussianProcessModel,
-        max_parent_set: int = 2,
-        num_orders: int = 20,
-    ) -> None:
-        self.arco = arco
-        self.mech_model = mech_model
-        self.K = max_parent_set
-        self.M = num_orders
-
-    # ------------------------------------------------------------------
-    # Public API expected by ExpDesignerBase subclasses
-    # ------------------------------------------------------------------
-    def mc_graphs(self) -> Tuple[List[nx.DiGraph], torch.Tensor]:
-        """Return `(graphs, log_posterior)` where the second entry is a 1‑D
-        tensor of *log* probabilities that sum to 0 in log‑space."""
-        graphs: List[nx.DiGraph] = []
-        logps: List[torch.Tensor] = []
-
-        # 1. sample a small batch of orders – same strategy as DiBS designer
-        orders, masks = self.arco.sample(self.M)
-
-        # 2. enumerate DAGs for each order and compute log p(D|G,ψ)
-        for mask in masks:
-            dags = self.arco.enumerate_graphs_from_order(mask, self.K)
-            for G in dags:
-                graphs.append(G)
-                # GP‑marginal likelihood, Eq. 11 (closed form; cached)
-                logps.append(
-                    self.mech_model.mll(
-                        [], G, prior_mode=False, use_cache=True
-                    )
-                )
-
-        logp_tensor = torch.tensor(logps, dtype=torch.float32)
-        # 3. normalise – log posterior over graphs up to sampled support
-        logp_tensor = logp_tensor - torch.logsumexp(logp_tensor, dim=0)
-        return graphs, logp_tensor
+from src.abci_arco_gp import ABCIArCOGP
 
 class ExpDesignerABCIArCOGP(ExpDesignerBase):
-
     def __init__(
         self,
         intervention_bounds: Dict[str, Tuple[float, float]],
@@ -95,98 +22,66 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         distributed: bool = False,
     ) -> None:
         super().__init__(intervention_bounds, opt_strategy, distributed)
-        # The following members are populated in `init_design_process()`
+        self.agent: Optional[ABCIArCOGP] = None
         self.mech_model: Optional[SharedDataGaussianProcessModel] = None
-        self.graph_posterior: Optional[GraphPosteriorArCO] = None
 
     def init_design_process(self, args: dict):
-        """Called once by the ABCI main loop right before the first query.
-
-            * 'mechanism_model' : SharedDataGaussianProcessModel
-            * 'order_model'     : ArCO
-            * 'policy'          : str – must be 'graph-info-gain'
-            * 'batch_size', 'num_exp_per_graph', 'mode'  – optional
+        """Called once before the first query. Expects:
+           - 'agent': ABCIArCOGP instance
+           - 'mechanism_model': SharedDataGaussianProcessModel
+           - 'policy': 'graph-info-gain'
+           - optional: 'batch_size', 'num_exp_per_graph'
         """
-        self.mech_model = args["mechanism_model"]
-        arco_model: ArCO = args["order_model"]
-        self.graph_posterior = GraphPosteriorArCO(arco_model, self.mech_model)
+        assert args["policy"] == "graph-info-gain"
+        self.agent = args['agent']
+        self.mech_model = args['mechanism_model']
+        self.batch_size = args.get("batch_size", 1)
+        self.num_exp_per_graph = args.get("num_exp_per_graph", 1)
 
-        assert args["policy"] == "graph-info-gain", (
-            "ARCO designer currently supports only 'graph-info-gain'."
-        )
-
-        def _utility(intv: Dict[str, float]):
-            return self._graph_info_gain(
-                intv,
-                batch_size=args.get("batch_size", 1),
-                num_exp_per_graph=args.get("num_exp_per_graph", 1),
-            )
-
+        def _utility(interventions: Dict[str, float]):
+            return self._graph_info_gain(interventions)
         self.utility = _utility
 
-    # ------------------------------------------------------------------
-    # Internal helpers (keep same names as DiBS designer where applicable)
-    # ------------------------------------------------------------------
     def _simulate_experiment(
         self,
         interventions: Dict[str, float],
-        batch_size: int,
-        num_exp_per_graph: int,
-        graph: nx.DiGraph,
+        graph,  # not used in exact version
     ) -> Experiment:
-        """Draw *synthetic* outcome(s) X_t ~ p(·|G,do(a),D) (one batch)."""
-        return self.mech_model.sample(
-            interventions, batch_size, num_exp_per_graph, graph
-        )
+        """Draw synthetic outcomes X_t ~ p(·|interventions, D_E) (batch omitted)."""
+        # no specific graph needed for exact predictive
+        return self.mech_model.sample(interventions, self.batch_size, self.num_exp_per_graph, graph=None)
 
-    def _log_pred_density(
-        self, exp: Experiment, graph: nx.DiGraph
-    ) -> torch.Tensor:
-        """Closed‑form GP predictive log‑density log p(exp | G, D)."""
-        return self.mech_model.mll(
-            [exp], graph, prior_mode=False, use_cache=True, reduce=True
-        )
-
-    # ------------------------------------------------------------------
-    # Causal‑discovery information gain                                  
-    # ------------------------------------------------------------------
     def _graph_info_gain(
         self,
         interventions: Dict[str, float],
-        batch_size: int = 1,
-        num_exp_per_graph: int = 1,
-        num_mc_graphs: int = 20,
     ) -> torch.Tensor:
-        """Monte‑Carlo estimate of U_CD (Eq. 4.13)."""
-        assert self.graph_posterior is not None and self.mech_model is not None
+        """Exact U_CD using closed-form factorising and additive expectations."""
+        # 1) sample causal orders under p(L | D_E)
+        mc_cos, _ = self.agent.sample_mc_cos(set_data=True)
 
-        # (1) MC outer graphs & log weights (p(G|D) over sampled support)
-        outer_graphs, log_post = self.graph_posterior.mc_graphs()
-        post_probs = log_post.exp()
+        # 2) predictive log-density: log p(X_t | D_E)
+        def pred_log_node(node: str, parents: list[str]) -> torch.Tensor:
+            # log p(x_{t,i} | parents, D_E)
+            # here simulate one batch and compute node-wise log-likelihood
+            exp = self._simulate_experiment(interventions, graph=None)
+            return self.mech_model.node_mll([exp], node, parents, prior_mode=False)
 
-        # storage for individual IG estimates per outer graph
-        ig_estimates = torch.zeros(len(outer_graphs))
+        log_p_xt = self.agent.graph_posterior_expectation_factorising(
+            func=pred_log_node,
+            mc_cos=mc_cos,
+            logspace=True
+        )
 
-        for idx, G in enumerate(outer_graphs):
-            # (2) simulate fictitious experiment under G
-            synthetic_data = self._simulate_experiment(
-                interventions, batch_size, num_exp_per_graph, G
-            )
+        # 3) expected log-likelihood: E_{G|D_E}[log p(X_t | G, D)]
+        def loglik_node(node: str, parents: list[str]) -> torch.Tensor:
+            exp = self._simulate_experiment(interventions, graph=None)
+            return self.mech_model.node_mll([exp], node, parents, prior_mode=False)
 
-            # IMPORTANT: new synthetic data ⇒ clear GP cache
-            self.mech_model.clear_posterior_mll_cache()
+        E_logp = self.agent.graph_posterior_expectation_additive(
+            func=loglik_node,
+            mc_cos=mc_cos,
+            logspace=True
+        )
 
-            # (3) log p(x̃ | G, D)
-            ll_G = self._log_pred_density(synthetic_data, G)
-
-            # (4) mixture predictive – reuse the SAME synthetic data and graphs
-            ll_all = torch.tensor([
-                self._log_pred_density(synthetic_data, Gp) for Gp in outer_graphs
-            ])
-            log_mix = torch.logsumexp(ll_all + log_post, dim=0)
-
-            #  (ll_G - log_mix) averaged over synthetic draws (already scalar)
-            ig_estimates[idx] = ll_G - log_mix
-
-        # (5) final expectation over graph posterior samples
-        return (post_probs * ig_estimates).sum()
+        # 4) U_CD is difference between expected log-likelihood and predictive log-density
+        return E_logp - log_p_xt
