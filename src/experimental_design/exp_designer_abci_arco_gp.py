@@ -45,11 +45,10 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
     def _simulate_experiment(
         self,
         interventions: Dict[str, float],
-        graph,  # not used in exact version
+        graph,
     ) -> Experiment:
         """Draw synthetic outcomes X_t ~ p(·|interventions, D_E) (batch omitted)."""
-        # no specific graph needed for exact predictive
-        return self.mech_model.sample(interventions, self.batch_size, self.num_exp_per_graph, graph=None)
+        return self.mech_model.sample(interventions, self.batch_size, self.num_exp_per_graph, graph=graph)
 
     def _graph_info_gain(
         self,
@@ -83,5 +82,4 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
             logspace=True
         )
 
-        # 4) U_CD is difference between expected log-likelihood and predictive log-density
         return E_logp - log_p_xt
