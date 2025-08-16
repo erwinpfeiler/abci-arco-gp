@@ -130,7 +130,8 @@ class ABCIArCOGP(ABCIBase):
                             'order_model'        : self.co_model,          # trained ArCO model
                             'policy'             : 'graph-info-gain',
                             'batch_size'         : batch_size,
-                            'num_exp_per_graph'  : 100                     # same constant you used before
+                            'num_exp_per_graph'  : 100,                     # same constant you used before
+                            'agent'              : self
                         }
                     else:
                         assert False, print(f'Invalid policy {self.cfg.policy}!')
@@ -593,7 +594,7 @@ class ABCIArCOGP(ABCIBase):
                     graph = adj_mat_to_graph(adj_mats[cidx, gidx], self.mechanism_model.node_labels)
                     self.mechanism_model.init_topological_order(graph, self.sample_time)
                     exp = self.mechanism_model.sample(interventions, 1, num_samples_per_graph, graph)
-                    for node in samples:
+                    for node in samples: # maybe remove this, I don't know what it is doing
                         samples[node][cidx, gidx] = exp.data[node].squeeze()
 
             for node in samples:

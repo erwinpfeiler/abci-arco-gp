@@ -540,7 +540,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     num_initial_obs_samples: int = 200
 
     # eval parameters
-    num_mc_cos: int = 100
+    num_mc_cos: int = 10 # 100
     num_mc_graphs: int = 10
     compute_distributional_stats: bool = True
     num_samples_per_graph = 10
@@ -558,7 +558,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     arco_es_min_steps: int = 50  # minimum number of gradient steps to perform before checking early stopping
 
     # active learning
-    batch_size = 100
+    batch_size = 10
 
     @classmethod
     def check_policy(cls, policy: str):
