@@ -1,4 +1,4 @@
-name: bci-arco-gp
+name: abci-arco-gp
 channels:
   - gpytorch
   - conda-forge

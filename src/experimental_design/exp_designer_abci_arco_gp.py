@@ -74,7 +74,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         Then for each L I sample a set of G called graphs (this will be only used here
         not for G' which we will circumvent by calculating the posterior in closed form)
         """
-        num_mc_graphs = 10 # TODO: get from args dict
+        num_mc_graphs = 5 # TODO: get from args dict
         
         # 1) sample causal orders under p(L | D_E)
         mc_cos, mc_adj_masks = self.agent.sample_mc_cos(set_data=True)
@@ -86,7 +86,6 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         """
         #print(f"num_cos = {adj_mats.shape[0]} num_mc_graphs = {adj_mats.shape[1]}")
         #print(f"num_nodes = {adj_mats.shape[2]} num_nodes = {adj_mats.shape[3]}")
-        num_samples_per_graph = self.batch_size
         num_cos, num_graphs = adj_mats.shape[0:2]
         #samples = {node: torch.zeros(num_cos, num_graphs, num_samples_per_graph) for node in
         #           self.mech_model.node_labels}

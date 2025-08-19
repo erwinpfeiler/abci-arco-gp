@@ -569,7 +569,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     num_initial_obs_samples: int = 200
 
     # eval parameters
-    num_mc_cos: int = 10 # 100
+    num_mc_cos: int = 5 # 100
     num_mc_graphs: int = 10
     compute_distributional_stats: bool = False
     num_samples_per_graph = 10

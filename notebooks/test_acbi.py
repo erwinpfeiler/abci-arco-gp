@@ -1,7 +1,10 @@
 import sys
 import os
 
+from pathlib import Path
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
+sys.path.append(os.path.abspath(os.getcwd()))
+
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
