@@ -123,25 +123,24 @@ class ABCIArCOGP(ABCIBase):
                     interventions = self.get_random_intervention(0.)
                 else:
                     if self.cfg.policy == 'graph-info-gain':
-                        print(f"got GIG policy ")
                         batch_size = self.cfg.batch_size          # for the synthetic roll-out
                         args = {
                             'mechanism_model'    : self.mechanism_model,   # full GP model
                             'order_model'        : self.co_model,          # trained ArCO model
                             'policy'             : 'graph-info-gain',
                             'batch_size'         : batch_size,
-                            'num_exp_per_graph'  : 100,                     # same constant you used before
+                            'num_exp_batches_per_graph'  : 1,                     # same constant you used before
                             'agent'              : self
                         }
                     else:
                         assert False, print(f'Invalid policy {self.cfg.policy}!')
                         
                     if self.num_workers > 1: # ignore this case for now
-                        interventions, info_gain = self.design_experiment_distributed(args)
+                        interventions = self.design_experiment_distributed(args)
                     else:
                         designer = self.experiment_designer_factory()
                         designer.init_design_process(args)
-                        interventions, info_gain = designer.get_best_experiment(self.env.intervenable_nodes)
+                        interventions = designer.get_best_experiment(self.env.intervenable_nodes)
 
                 # perform experiment
                 num_experiments_conducted = len(self.experiments)
@@ -167,6 +166,9 @@ class ABCIArCOGP(ABCIBase):
                 self.save_model()
                 self.compute_stats()
                 self.export_stats()
+                print(f'Experiment {epoch + 1}/{self.cfg.num_experiments},'
+                      f'ESHD is {self.stats["eshd"][-1].item():.2f}, '
+                      f'A-AID is {self.stats["aaid"][-1].item():.2f}', flush=True)
             elif self.cfg.log_interval > 0 and epoch % self.cfg.log_interval == 0:
                 # print log output
                 print('Logging stats...')

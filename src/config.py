@@ -569,10 +569,10 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     num_initial_obs_samples: int = 200
 
     # eval parameters
-    num_mc_cos: int = 5 # 100
+    num_mc_cos: int = 20 # 100
     num_mc_graphs: int = 10
     compute_distributional_stats: bool = False
-    num_samples_per_graph = 10
+    num_samples_per_graph = 100
 
     # training parameters
     tau: float = 0.1  # score func estimator baseline decay factor
@@ -587,7 +587,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     arco_es_min_steps: int = 50  # minimum number of gradient steps to perform before checking early stopping
 
     # active learning
-    batch_size = 10
+    batch_size = 100
 
     @classmethod
     def check_policy(cls, policy: str):

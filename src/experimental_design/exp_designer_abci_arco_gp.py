@@ -32,14 +32,14 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
            - 'agent': ABCIArCOGP instance
            - 'mechanism_model': SharedDataGaussianProcessModel
            - 'policy': 'graph-info-gain'
-           - optional: 'batch_size', 'num_exp_per_graph'
+           - optional: 'batch_size', 'num_exp_batches_per_graph'
         """
         assert args["policy"] == "graph-info-gain"
         print(f"args = {args}")
         self.agent = args['agent']
         self.mech_model = args['mechanism_model']
         self.batch_size = args.get("batch_size", 1)
-        self.num_exp_per_graph = args.get("num_exp_per_graph", 1)
+        self.num_exp_batches_per_graph = args.get("num_exp_batches_per_graph", 1)
 
         def _utility(interventions: Dict[str, float]):
             return self._graph_info_gain(interventions)
@@ -51,7 +51,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         graph,
     ) -> Experiment:
         """Draw synthetic outcomes X_t ~ p(·|interventions, D_E) (batch omitted)."""
-        return self.mech_model.sample(interventions, self.batch_size, self.num_exp_per_graph, graph=graph)
+        return self.mech_model.sample(interventions, self.batch_size, self.num_exp_batches_per_graph, graph=graph)
 
     def _graph_info_gain(
         self,
@@ -85,7 +85,6 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         Adjacency matrices of shape (num_cos, num_mc_graphs, num_nodes, num_nodes)
         """
     
-        num_samples_per_graph = self.batch_size
         num_cos, num_graphs = adj_mats.shape[0:2]
         # 3) normalize order weights: w_L = p(L|D) in linear space
         #    co_weights are log-weights per node; sum over nodes, then logsumexp over orders for Z
@@ -93,22 +92,11 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         log_Z = log_w_co.logsumexp(dim=0)                # scalar
         w_co = (log_w_co - log_Z).exp()                  # normalized weights over orders, linear space
 
-        
-        """
-        with torch.no_grad():
-            for cidx in range(num_cos):
-                for gidx in range(num_graphs):
-                    graph = adj_mat_to_graph(adj_mats[cidx, gidx], self.mechanism_model.node_labels)
-                    self.mechanism_model.init_topological_order(graph, self.sample_time)
-                    exp = self.mechanism_model.sample(interventions, 1, num_samples_per_graph, graph)
-                    for node in samples: # maybe remove this, I don't know what it is doing
-                        samples[node][cidx, gidx] = exp.data[node].squeeze()
-        """
         # 4) accumulate expected info gain
         #    U ≈ Σ_L w_L * (1/|G|) Σ_G E_{Xt|G}[ log E_{L',G'} p(Xt|M')  –  log p(Xt|G,D) ]
         with torch.inference_mode():
             expected_info_gain = None  # lazy init on correct device/dtype
-            for cidx in range(num_cos):
+            for cidx in trange(num_cos):
                 per_order_avg = None
                 for gidx in range(num_graphs):
                     # build graph and simulate Xt ~ p(Xt | G)
@@ -149,37 +137,3 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
 
         return expected_info_gain
 
-        for cidx in trange(num_cos):
-            for gidx in trange(num_graphs):
-                # now we have to sample experiments Xt|G, for each cidx for each gidx
-                graph = adj_mat_to_graph(adj_mats[cidx, gidx], self.mech_model.node_labels)
-                self.mech_model.init_topological_order(graph, self.agent.sample_time) # TODO: what is sample_time?
-                print(f"graph = {graph}")
-                exp = self._simulate_experiment(interventions, graph) # exp is the et of Xt
-                #for node in samples:
-                #    samples[node][cidx, gidx] = exp.data[node].squeeze()
-                def pred_log_node(node: str, parents: list[str], _exp=exp) -> torch.Tensor:
-                  return self.mech_model.node_mll([_exp], node, parents, prior_mode=False)
-                """
-                now calculate in closed form
-                log(E(L'|theta) [w_L'* E(G'|L',psi,D)[p(Xt|M')]])/(p(Xt|G',D))]
-                inner_exp := E(G'|L',psi,D)[p(Xt|M')]]
-                denominator = p(Xt|G',D)
-                """
-                parent_sets = self.agent.generate_co_parent_sets(mc_adj_masks[cidx])
-                for nidx, node in enumerate(self.agent.env.node_labels):
-                    for pidx, parents in enumerate(parent_sets[node]):  
-                        #denominator = pred_log_node(node, parents) # this is wrong
-                        outer_log = self.mech_model.mll(
-                            [exp], graph, prior_mode=False,
-                            use_cache=True, mode='independent_batches', reduce=True
-                        )
-                        inner_exp_log = self.agent.graph_posterior_expectation_factorising(
-                          func=pred_log_node,
-                          mc_cos=mc_cos,
-                          logspace=True
-                        )
-                        # actually I am of course calculating log-probabilities so I don't need to
-                        # divide them but take the difference: inner_exp-denominator
-        quit(0)
-        return torch.Tensor(0.0)
