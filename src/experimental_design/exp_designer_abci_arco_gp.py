@@ -17,6 +17,7 @@ from src.utils.graphs import adj_mat_to_graph
 from tqdm import tqdm, trange
 
 class ExpDesignerABCIArCOGP(ExpDesignerBase):
+
     def __init__(
         self,
         intervention_bounds: Dict[str, Tuple[float, float]],
@@ -104,8 +105,12 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
                     self.mech_model.init_topological_order(graph, self.agent.sample_time)
                     exp = self._simulate_experiment(interventions, graph)
                     # define per-node log predictive under GP for the *sampled* Xt
+                    # first clear MLL cache:
+                    self.mech_model.clear_posterior_mll_cache()
+                    self.mech_model.clear_prior_mll_cache()
                     def pred_log_node(node: str, parents: list[str], _exp=exp) -> torch.Tensor:
-                        return self.mech_model.node_mll([_exp], node, parents, prior_mode=False)
+                        return self.mech_model.node_mll([_exp], node, parents, prior_mode=False,
+                                                        use_cache=True, reduce=True)
 
                     # inner expectation over (L', G' | D) in closed form (returns log E[...] )
                     inner_exp_log = self.agent.graph_posterior_expectation_factorising(

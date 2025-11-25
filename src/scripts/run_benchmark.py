@@ -3,7 +3,7 @@ from datetime import datetime
 
 ##################################################
 # PATHS
-PROJECT = '/path/to/bci-arco-gp'
+PROJECT = '/home/erwin/abci-arco-gp/'
 DATA = os.path.join(PROJECT, 'data')
 RESULTS = os.path.join(PROJECT, 'results')
 LOGS = os.path.join(PROJECT, 'logs')
@@ -14,7 +14,7 @@ CONFIGS = os.path.join(PROJECT, 'configs')
 ##################################################
 ENV = 'BarabasiAlbert'
 DATA_SUBDIRS = [
-    '20_nodes_100_train',
+    '8_nodes_20_train',
 ]
 MODEL = 'abci-arco-gp'
 SIM_TOKEN = 'some-identifier'
@@ -23,7 +23,7 @@ CONFIG = 'example-config.py'
 
 ##################################################
 # SIMULATION SETUP
-CONDA_ENV = 'bci'
+CONDA_ENV = 'abci-arco-gp'
 NUM_RUNS_PER_ENV = 1
 
 

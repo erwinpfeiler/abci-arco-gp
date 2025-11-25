@@ -128,7 +128,7 @@ class ABCIArCOGP(ABCIBase):
                             'mechanism_model'    : self.mechanism_model,   # full GP model
                             'order_model'        : self.co_model,          # trained ArCO model
                             'policy'             : 'graph-info-gain',
-                            'batch_size'         : batch_size,
+                            'batch_size'         : 1,
                             'num_exp_batches_per_graph'  : 1,                     # same constant you used before
                             'agent'              : self
                         }

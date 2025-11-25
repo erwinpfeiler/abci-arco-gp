@@ -566,7 +566,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     num_experiments: int = 1
     batch_size: int = 1
     log_interval: int = 1
-    num_initial_obs_samples: int = 200
+    num_initial_obs_samples: int = 20 #200
 
     # eval parameters
     num_mc_cos: int = 20 # 100
@@ -585,9 +585,6 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     num_cos_arco_opt: int = 100
     arco_lr: float = 1e-2  # co model optimizer learning rate
     arco_es_min_steps: int = 50  # minimum number of gradient steps to perform before checking early stopping
-
-    # active learning
-    batch_size = 100
 
     @classmethod
     def check_policy(cls, policy: str):

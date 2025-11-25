@@ -41,25 +41,26 @@ if __name__=="__main__":
 
     env = BarabasiAlbert(num_nodes, env_cfg)
 
-    for i in range(5):
+    for i in range(3):
+        continue
         print(f"\n\nSTARTING NEW EXPERIMENT RANDOM\n\n")
         cfg_random = ABCIArCOGPConfig()
         #cfg.policy = 'static-obs-dataset'
         cfg_random.policy = 'random'
-        cfg_random.num_experiments = 3 #to get some iterative behaviour
+        cfg_random.num_experiments = 4 #to get some iterative behaviour
         cfg_random.max_ps_size = 2
         cfg_random.num_workers = 1
         cfg_random.num_arco_steps = 100
         abci_random = ABCI(env, cfg_random)
         abci_random.run()
 
-    for i in range(3):
+    for i in range(1):
         print(f"\n\nSTARTING NEW EXPERIMENT ACTIVE LEARNING\n\n")
         cfg = ABCIArCOGPConfig()
         #cfg.policy = 'static-obs-dataset'
         cfg.policy = 'graph-info-gain'
         #cfg.policy = 'random'
-        cfg.num_experiments = 3 #to get some iterative behaviour
+        cfg.num_experiments = 2 #to get some iterative behaviour
         cfg.max_ps_size = 2
         cfg.num_workers = 1
         cfg.num_arco_steps = 100
