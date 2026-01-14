@@ -588,8 +588,13 @@ class SharedDataGaussianProcess(Mechanism):
     def get_fdist(self, inputs: Tensor, key: str, prior_mode=False):
         inputs, _, batch_shape = self._check_args(inputs)
         self.activate(key)
-        with gpytorch.settings.prior_mode(prior_mode):
-            f_dist = self.gp(inputs, key=key)
+        if prior_mode:
+            with gpytorch.settings.prior_mode(prior_mode):
+                f_dist = self.gp(inputs, key=key)
+        else:
+            with gpytorch.settings.prior_mode(prior_mode):
+                f_dist = self.gp(inputs, key=key)
+
 
         return f_dist
 

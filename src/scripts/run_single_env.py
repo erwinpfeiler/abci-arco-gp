@@ -8,6 +8,12 @@ import time
 import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 
+import sys
+from pathlib import Path
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
+sys.path.append(os.path.abspath(os.getcwd()))
+sys.path.append('/home/erwin/abci-arco-gp/')
+
 from src.abci_arco_gp import ABCIArCOGP
 from src.abci_categorical_gp import ABCICategoricalGP
 from src.abci_dibs_gp import ABCIDiBSGP
@@ -19,7 +25,8 @@ from src.utils.graphs import adj_mat_to_graph, get_graph_key
 
 MODELS = {'abci-categorical-gp', 'abci-dibs-gp', 'abci-arco-gp',
           'anm', 'ges', 'daggnn', 'gadget', 'gae', 'golem', 'grandag', 'grasp', 'pc', 'resit', 'beeps',
-          'abci-resit-gp', 'abci-true-graph-gp'}
+          'abci-resit-gp', 'abci-true-graph-gp',
+          'abci-arco-gp-random', 'abci-arco-gp-graph-info', 'abci-arco-gp-random-fixed-value'}
 
 
 def spawn_model(model: str, env: Environment, num_workers: int, output_dir: str, run_id: str):
@@ -42,6 +49,30 @@ def spawn_model(model: str, env: Environment, num_workers: int, output_dir: str,
         cfg.num_workers = num_workers
         cfg.output_dir = output_dir
         cfg.run_id = run_id
+        return ABCIArCOGP(env, cfg)
+    
+    elif model == 'abci-arco-gp-random':
+        cfg = ABCIArCOGPConfig()
+        cfg.num_workers = num_workers
+        cfg.output_dir = output_dir
+        cfg.run_id = run_id
+        cfg.policy = "random"
+        return ABCIArCOGP(env, cfg)
+    
+    elif model == 'abci-arco-gp-random-fixed-value':
+        cfg = ABCIArCOGPConfig()
+        cfg.num_workers = num_workers
+        cfg.output_dir = output_dir
+        cfg.run_id = run_id
+        cfg.policy = 'random-fixed-value'
+        return ABCIArCOGP(env, cfg)
+    
+    elif model == 'abci-arco-gp-graph-info':
+        cfg = ABCIArCOGPConfig()
+        cfg.num_workers = num_workers
+        cfg.output_dir = output_dir
+        cfg.run_id = run_id
+        cfg.policy = 'graph-info-gain'
         return ABCIArCOGP(env, cfg)
 
     elif model == 'abci-resit-gp':
@@ -102,10 +133,11 @@ def run_worker(rank: int, env: Environment, master_port: str, num_workers: int, 
                      rank=rank,
                      world_size=num_workers,
                      rpc_backend_options=rpc.TensorPipeRpcBackendOptions(num_worker_threads=num_workers, rpc_timeout=0))
-        try:
+        try: #TODO: return to try except block once all bugs are fixed
             abci = spawn_model(abci_model, env, num_workers, output_dir, run_id)
             abci.run()
         except Exception as e:
+            print(f"EXCEPTION: ")
             print(e)
     else:
         rpc.init_rpc(f'ExperimentDesigner{rank}',
@@ -156,8 +188,10 @@ def run_single_env(env_file: str, output_dir: str, model: str, num_workers: int)
         try:
             abci = spawn_model(model, env, 1, output_dir, run_id)
             abci.run()
-        except Exception as e:
-            print(e)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            raise
 
     print('\n-------------------------------------------------------------------------------------------')
     print(f'--------- Finish time: {time.strftime("%d.%m.%Y %H:%M:%S")}')
@@ -166,6 +200,7 @@ def run_single_env(env_file: str, output_dir: str, model: str, num_workers: int)
 
 # parse arguments when run from shell
 if __name__ == "__main__":
+    print(f"Staring run_single_env")
     parser = argparse.ArgumentParser('Usage on single environment:')
     parser.add_argument('env_file', type=str, help=f'Path to environment file.')
     parser.add_argument('model', type=str, choices=MODELS, help=f'Available models: {MODELS}')
@@ -174,3 +209,4 @@ if __name__ == "__main__":
 
     args = vars(parser.parse_args())
     run_single_env(args['env_file'], args['output_dir'], args['model'], args['num_workers'])
+    print(f"Done with run_singe_env")

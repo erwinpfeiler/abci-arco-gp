@@ -5,7 +5,6 @@ import torch
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from torch.optim import Adam
 
-
 class SurrogateGP(gpytorch.models.ExactGP):
     def __init__(self, train_x=None, train_y=None):
         likelihood = gpytorch.likelihoods.GaussianLikelihood()
@@ -19,10 +18,96 @@ class SurrogateGP(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultivariateNormal(mean, covar)
 
 
+
 def gp_ucb(utility: Callable[[torch.Tensor], torch.Tensor], bounds: torch.Tensor):
     assert bounds.numel() == 2, print(bounds.shape)
     lower_bnd = bounds.squeeze()[0]
     upper_bnd = bounds.squeeze()[1]
+
+    # BO parameters
+    num_total_candidates = 15
+    num_initial_candidates = 5
+    surrogate_lr = 1e-1
+    num_opt_steps = 50
+    beta = 5.0
+    num_grid_points = 100
+
+    # init surrogate GP and optimizer
+    surrogate_gp = SurrogateGP()
+    likelihood = surrogate_gp.likelihood
+    optimizer = Adam(surrogate_gp.parameters(), lr=surrogate_lr)
+
+    # grid for acquisition
+    xgrid = torch.linspace(lower_bnd, upper_bnd, steps=num_grid_points).view(-1, 1)
+
+    # initial candidates
+    candidates = torch.rand((num_initial_candidates, 1)) * (upper_bnd - lower_bnd) + lower_bnd
+
+    # evaluate utility at initial candidates (labels: no grad)
+    with torch.no_grad():
+        utilities_list = [utility(candidates[i, 0]).reshape(()) for i in range(num_initial_candidates)]
+    utilities = torch.stack(utilities_list)  # shape: (num_initial_candidates,)
+
+    try:
+        for cidx in range(num_total_candidates - num_initial_candidates):
+            # set training data
+            surrogate_gp.set_train_data(candidates, utilities, strict=False)
+
+            # standard GPyTorch training mode
+            surrogate_gp.train()
+            likelihood.train()
+            mll = ExactMarginalLogLikelihood(likelihood, surrogate_gp)
+
+            # make sure gradients are enabled locally
+            with torch.enable_grad():
+                for tidx in range(num_opt_steps):
+                    optimizer.zero_grad()
+                    output = surrogate_gp(candidates)
+                    loss = -mll(output, utilities)
+                    loss.backward()
+                    optimizer.step()
+
+            # evaluate UCB on the grid (no grad needed)
+            surrogate_gp.eval()
+            likelihood.eval()
+            with torch.no_grad():
+                prediction = surrogate_gp(xgrid)
+                ucb = prediction.mean + beta * prediction.variance
+
+                # randomised argmax to break ties
+                shuffled_idc = torch.randperm(ucb.numel()).long()
+                argmax = ucb[shuffled_idc].argmax()
+                candidate = xgrid[shuffled_idc[argmax]].view(1, 1)
+
+                # append new candidate and its true utility
+                candidates = torch.cat((candidates, candidate), dim=0)
+                utilities = torch.cat(
+                    (utilities, utility(candidate.squeeze()).view(-1)),
+                    dim=0,
+                )
+
+    except Exception as e:
+        # Old fallback for *other* unexpected errors (optional)
+        print("Exception occured when running GP UCB (non-NoGradException):")
+        print("gp_ucb: grad_enabled at error:", torch.is_grad_enabled())
+        print(e)
+        print("Continuing with the best candidate from ", candidates)
+        print("with utilities ", utilities)
+
+
+    # final best candidate
+    best_idx = utilities.argmax()
+    best_candidate = candidates[best_idx].squeeze()
+    best_utility = utilities[best_idx]
+    return best_candidate, best_utility
+
+def gp_ucb_old(utility: Callable[[torch.Tensor], torch.Tensor], bounds: torch.Tensor):
+    assert bounds.numel() == 2, print(bounds.shape)
+    lower_bnd = bounds.squeeze()[0]
+    upper_bnd = bounds.squeeze()[1]
+
+
+    if not torch.is_grad_enabled(): print("gp_ucb: grad_enabled at entry:", torch.is_grad_enabled())
 
     # parameters (still hardcoded)
     num_total_candidates = 15
@@ -74,9 +159,12 @@ def gp_ucb(utility: Callable[[torch.Tensor], torch.Tensor], bounds: torch.Tensor
 
     except Exception as e:
         print('Exception occured when running GP UCB:')
+        print("gp_ucb: grad_enabled at entry:", torch.is_grad_enabled())
         print(e)
         print('Continuing with the best candidate from ', candidates)
         print('with utilities ', utilities)
+        print(f"No, now for debugging I will stop here")
+        quit(1)
 
     # return best candidate and objective values
     best_idx = utilities.argmax()

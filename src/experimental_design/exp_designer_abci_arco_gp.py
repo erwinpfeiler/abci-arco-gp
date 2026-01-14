@@ -41,6 +41,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         self.mech_model = args['mechanism_model']
         self.batch_size = args.get("batch_size", 1)
         self.num_exp_batches_per_graph = args.get("num_exp_batches_per_graph", 1)
+        self.num_mc_graphs = args.get("num_mc_graphs", 5)
 
         def _utility(interventions: Dict[str, float]):
             return self._graph_info_gain(interventions)
@@ -52,6 +53,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         graph,
     ) -> Experiment:
         """Draw synthetic outcomes X_t ~ p(·|interventions, D_E) (batch omitted)."""
+        #self.mech_model.eval()
         return self.mech_model.sample(interventions, self.batch_size, self.num_exp_batches_per_graph, graph=graph)
 
     def _graph_info_gain(
@@ -75,7 +77,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         Then for each L I sample a set of G called graphs (this will be only used here
         not for G' which we will circumvent by calculating the posterior in closed form)
         """
-        num_mc_graphs = 5 # TODO: get from args dict
+        num_mc_graphs = self.num_mc_graphs # TODO: get from args dict
         
         # 1) sample causal orders under p(L | D_E)
         mc_cos, mc_adj_masks = self.agent.sample_mc_cos(set_data=True)
@@ -97,7 +99,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         #    U ≈ Σ_L w_L * (1/|G|) Σ_G E_{Xt|G}[ log E_{L',G'} p(Xt|M')  –  log p(Xt|G,D) ]
         with torch.inference_mode():
             expected_info_gain = None  # lazy init on correct device/dtype
-            for cidx in trange(num_cos):
+            for cidx in range(num_cos):
                 per_order_avg = None
                 for gidx in range(num_graphs):
                     # build graph and simulate Xt ~ p(Xt | G)

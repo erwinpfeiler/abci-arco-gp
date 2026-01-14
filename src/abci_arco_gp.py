@@ -42,6 +42,7 @@ class ABCIArCOGP(ABCIBase):
             num_workers = param_dict['cfg_param_dict']['num_workers']
             super().__init__(num_workers)
             self.load_param_dict(param_dict)
+            print(f"Received valid ABCIArCOGPConfig")
         else:
             # load (default) config
             self.cfg = ABCIArCOGPConfig() if cfg is None else cfg
@@ -89,7 +90,8 @@ class ABCIArCOGP(ABCIBase):
         Returns:
             None
         """
-        print(f"NOw running ARCO GP with policy = {self.cfg.policy}")
+        #self.mechanism_model.train()
+        print(f"Now running ARCO GP with policy = {self.cfg.policy}")
         print(f"There are {self.cfg.num_experiments} planned experiments")
         for epoch in range(self.cfg.num_experiments):
             # pick intervention/data according to policy
@@ -129,8 +131,9 @@ class ABCIArCOGP(ABCIBase):
                             'order_model'        : self.co_model,          # trained ArCO model
                             'policy'             : 'graph-info-gain',
                             'batch_size'         : 1,
-                            'num_exp_batches_per_graph'  : 1,                     # same constant you used before
-                            'agent'              : self
+                            'num_exp_batches_per_graph'  : 1,
+                            'agent'              : self,
+                            'num_mc_graphs'      : self.cfg.num_mc_graphs
                         }
                     else:
                         assert False, print(f'Invalid policy {self.cfg.policy}!')
@@ -147,7 +150,10 @@ class ABCIArCOGP(ABCIBase):
                 batch_size = self.cfg.batch_size
                 if num_experiments_conducted == 0 and self.cfg.num_initial_obs_samples > 0:
                     batch_size = self.cfg.num_initial_obs_samples
-                self.experiments.append(self.env.sample(interventions, batch_size))
+
+                for k,v in self.env.mechanisms.items(): #TODO: somehow this is necessary, ask CT about that
+                    v.eval()
+                self.experiments.append(self.env.sample(interventions, batch_size, num_batches=1, prior_mode=True)) #TODO: Erwin added prior_mode=True
 
             # clear caches
             self.mechanism_model.clear_prior_mll_cache()
@@ -258,7 +264,8 @@ class ABCIArCOGP(ABCIBase):
         self.mechanism_model.discard_gps()
 
         # update mechanism hyperparameters
-        self.mechanism_model.update_gp_hyperparameters(self.experiments, mechanism_keys)
+        if not set_data: #FIXME: fixed by Erwin, because set_data was ignored before and inconsistent with docstring
+            self.mechanism_model.update_gp_hyperparameters(self.experiments, mechanism_keys)
 
         # pre-compute mc weights
         self.co_weights = torch.zeros(num_cos, self.env.num_nodes)

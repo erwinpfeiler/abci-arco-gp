@@ -1,6 +1,12 @@
 import os
 from datetime import datetime
 
+import sys
+from pathlib import Path
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
+sys.path.append(os.path.abspath(os.getcwd()))
+sys.path.append('/home/erwin/abci-arco-gp/')
+
 ##################################################
 # PATHS
 PROJECT = '/home/erwin/abci-arco-gp/'
@@ -14,9 +20,9 @@ CONFIGS = os.path.join(PROJECT, 'configs')
 ##################################################
 ENV = 'BarabasiAlbert'
 DATA_SUBDIRS = [
-    '8_nodes_20_train',
+    '10_nodes_50_train',
 ]
-MODEL = 'abci-arco-gp'
+MODEL = 'abci-arco-gp-graph-info' # 'abci-arco-gp-graph-info' or 'abci-arco-gp-random'
 SIM_TOKEN = 'some-identifier'
 CONFIG = 'example-config.py'
 ##################################################

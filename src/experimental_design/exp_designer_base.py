@@ -56,6 +56,7 @@ class ExpDesignerBase:
             target_value, score = grid_search(lambda x: self.utility({target_node: x}), bounds)
         else:
             target_value, score = gp_ucb(lambda x: self.utility({target_node: x}), bounds)
+            
 
         return Design({target_node: target_value}, score)
 

@@ -321,6 +321,12 @@ class SharedDataGaussianProcessModel:
 
     def sample(self, interventions: dict, batch_size: int, num_batches: int, graph: nx.DiGraph) -> Experiment:
         data = dict()
+        #self.eval()
+
+        for gp in self.gps.values():
+            if gp.training:
+                print(f"WARNING: GP.training = True in SDGPM.sample(), setting it to False")
+                gp.eval()
         x = torch.zeros(num_batches, batch_size, len(self.node_labels))
         for node in self.topological_orders[get_graph_key(graph)]:
             # check if node is intervened upon

@@ -43,13 +43,17 @@ class ABCIBase:
         raise NotImplementedError
 
     def get_random_intervention(self, fixed_value: float = None):
+        print(f"get_random_intervention")
         target_node = random.choice(list(self.env.intervenable_nodes) + ['OBSERVATIONAL'])
         if target_node == 'OBSERVATIONAL':
+            print(f"observational")
             return {}
         if fixed_value is None:
+            print(f"fixed value is None")
             bounds = self.env.intervention_bounds[target_node]
             target_value = torch.rand(1) * (bounds[1] - bounds[0]) + bounds[0]
         else:
+            print(f"Else")
             target_value = torch.tensor(fixed_value)
         return {target_node: target_value}
 

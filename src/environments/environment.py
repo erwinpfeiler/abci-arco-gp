@@ -170,14 +170,13 @@ class Environment:
 
         return outputs
 
-    def sample(self, interventions: dict, batch_size: int, num_batches: int = 1) -> Experiment:
+    def sample(self, interventions: dict, batch_size: int, num_batches: int = 1, prior_mode: bool = False) -> Experiment:
         # if data is normalised, we assume the intervention values are normalised as well -> we need to un-normalise
         # them to perform ancestral sampling with the true mechanisms
         scaled_interventions = interventions.copy()
         if self.cfg.normalise_data:
             scaled_interventions = {node: value * self.normalisation_stds[node] + self.normalisation_means[node] for
                                     node, value in scaled_interventions.items()}
-
         # perform ancestral sampling
         data = dict()
         for node in self.topological_order:
@@ -190,12 +189,12 @@ class Environment:
                     mech = self.mechanisms[node]
                     parents = get_parents(node, self.graph)
                     if not parents:
-                        samples = mech.sample(torch.empty(num_batches, batch_size, 1))
+                        samples = mech.sample(torch.empty(num_batches, batch_size, 1), prior_mode=prior_mode)
                     else:
                         x = torch.cat([data[parent] for parent in parents], dim=-1)
                         assert x.shape == (num_batches, batch_size, mech.in_size), print(f'Invalid shape {x.shape}!')
-                        samples = mech.sample(x)
-
+                        samples = mech.sample(x, prior_mode=prior_mode)
+                       
             # store samples
             data[node] = samples
 
