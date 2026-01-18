@@ -78,6 +78,11 @@ class Simulation:
         for f in files:
             env_id, run_id, exp_num, res_type = parse_file_name(os.path.basename(f))
             if exp_num != self.num_experiments or res_type != result_type:
+                if exp_num != self.num_experiments:
+                    print(f"Num exp found {exp_num} does not match num exp set {self.num_experiments}")
+
+                if res_type != result_type:
+                    print(f"res_type found {res_type} does not match expected result_type {result_type}")
                 continue
 
             if env_id in result_files:

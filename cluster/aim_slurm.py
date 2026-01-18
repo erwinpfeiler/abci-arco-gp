@@ -4,15 +4,15 @@ from datetime import datetime
 
 PARTITIONS = 'normal'
 EXCLUDE = 'aim-gpu[1,3-4]'
-TIME = '1-23:59'
+TIME = '3-23:59'
 
 ##################################################
 # PATHS
-ROOT = '/ceph/home/TUG/ctoth-tug'
-PROJECT = os.path.join(ROOT, 'bci')
-DATA = os.path.join(ROOT, 'data')
-RESULTS = os.path.join(ROOT, 'results')
-LOGS = os.path.join(ROOT, 'slurm-logs')
+ROOT = '/ceph/home/TUG/epfeiler-tug'
+PROJECT = os.path.join(ROOT, 'abci-arco-gp')
+DATA = os.path.join(PROJECT, 'data')
+RESULTS = os.path.join(PROJECT, 'results')
+LOGS = os.path.join(PROJECT, 'slurm-logs')
 CONFIGS = os.path.join(PROJECT, 'configs')
 
 ##################################################
@@ -31,16 +31,18 @@ DATA_SUBDIRS = [
     # '20_nodes_1000_train_linear',
     '10_nodes_50_train'
 ]
-MODEL = 'abci-arco-gp-random' # 'abci-arco-gp-graph-info'
-SIM_TOKEN = 'test-arcogp1'
+#MODEL = 'abci-arco-gp-random'
+#MODEL = 'abci-arco-gp-graph-info'
+MODEL = 'abci-arco-gp-random-fixed-value'
+SIM_TOKEN = 'test-arcogp-graph-info'
 CONFIG = 'example-config.py'
 ##################################################
 
 ##################################################
 # SIMULATION SETUP
-CONDA_ENV = 'clufs-bci'
+CONDA_ENV = 'abci-arco-gp'
 NUM_GPUS = 0
-MEM = 30  # in GB
+MEM = 30 #30  # in GB
 NUM_RUNS_PER_ENV = 1
 
 
@@ -65,7 +67,7 @@ def main():
         num_environments = len(env_files)
 
         # create working directory
-        working_dir = os.path.join(ROOT, f'bci-{SIM_TOKEN}-{start_time}')
+        working_dir = os.path.join(ROOT, f'abci-{SIM_TOKEN}-{start_time}')
         os.makedirs(working_dir, exist_ok=True)
 
         # copy src and config to working dir/output dir
