@@ -29,11 +29,11 @@ DATA_SUBDIRS = [
     # '20_nodes_200_train_linear',
     # '20_nodes_500_train_linear',
     # '20_nodes_1000_train_linear',
-    '10_nodes_50_train'
+    '20_nodes_40_train'
 ]
 #MODEL = 'abci-arco-gp-random'
-#MODEL = 'abci-arco-gp-graph-info'
-MODEL = 'abci-arco-gp-random-fixed-value'
+MODEL = 'abci-arco-gp-graph-info'
+#MODEL = 'abci-arco-gp-random-fixed-value'
 SIM_TOKEN = 'test-arcogp-graph-info'
 CONFIG = 'example-config.py'
 ##################################################

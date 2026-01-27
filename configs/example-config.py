@@ -631,10 +631,10 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     output_dir: str = None
     model_name: str = 'abci-arco-gp'
     run_id: str = ''
-    num_experiments: int = 50
+    num_experiments: int = 70
     batch_size: int = 5
     log_interval: int = 1
-    num_initial_obs_samples: int = 5 #200
+    num_initial_obs_samples: int = 50 #200
 
     # eval parameters
     num_mc_cos: int = 100 # 100
