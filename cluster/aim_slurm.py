@@ -4,7 +4,7 @@ from datetime import datetime
 
 PARTITIONS = 'normal'
 EXCLUDE = 'aim-gpu[1,3-4]'
-TIME = '3-23:59'
+TIME = '23:59:59'
 
 ##################################################
 # PATHS
@@ -29,12 +29,17 @@ DATA_SUBDIRS = [
     # '20_nodes_200_train_linear',
     # '20_nodes_500_train_linear',
     # '20_nodes_1000_train_linear',
-    '20_nodes_40_train'
+    '16_nodes_debug'
 ]
 #MODEL = 'abci-arco-gp-random'
-MODEL = 'abci-arco-gp-graph-info'
+#SIM_TOKEN = 'test-arcogp-random'
+
+#MODEL = 'abci-arco-gp-graph-info'
+#SIM_TOKEN = 'test-arcogp-graph-info'
+
 #MODEL = 'abci-arco-gp-random-fixed-value'
-SIM_TOKEN = 'test-arcogp-graph-info'
+#SIM_TOKEN = 'test-arcogp-random-fixed'
+
 CONFIG = 'example-config.py'
 ##################################################
 
@@ -44,6 +49,8 @@ CONDA_ENV = 'abci-arco-gp'
 NUM_GPUS = 0
 MEM = 30 #30  # in GB
 NUM_RUNS_PER_ENV = 1
+
+NUM_WORKERS = 1
 
 
 def main():
@@ -87,9 +94,9 @@ def main():
                                 f'#SBATCH --output={os.path.join(logs_dir, MODEL + "-%A-%a.out")}\n',
                                 '#SBATCH --open-mode=append\n',
                                 '#SBATCH --ntasks=1\n'
-                                '#SBATCH --cpus-per-task=1\n',
+                                f'#SBATCH --cpus-per-task={NUM_WORKERS}\n',
                                 '#SBATCH --mail-type=END\n'
-                                '#SBATCH --mail-user=christian.toth@tugraz.at\n'
+                                '#SBATCH --mail-user=pfeiler@student.tugraz.at\n'
                                 f'#SBATCH --time={TIME}\n',
                                 f'#SBATCH --partition={PARTITIONS}\n',
                                 f'#SBATCH --exclude={EXCLUDE}\n',
@@ -107,7 +114,7 @@ def main():
 
             # write abci script command
             jobfile.write('env_files=("' + '" "'.join(map(str, env_files * NUM_RUNS_PER_ENV)) + '")\n')
-            jobfile.write(f'python {script} ' + '${env_files[$SLURM_ARRAY_TASK_ID]} ' + f'{MODEL} {output_dir} ')
+            jobfile.write(f'python {script} ' + '${env_files[$SLURM_ARRAY_TASK_ID]} ' + f'{MODEL} {output_dir} ' + f'--num_workers {NUM_WORKERS}')
             jobfile.write('\n\nexit $error\n')
 
         # start sbatch job

@@ -677,7 +677,7 @@ class EnvironmentConfig:
     num_observational_test_samples: int = 0
 
     generate_static_intr_dataset: bool = False
-    num_train_interventions: int = 20
+    num_train_interventions: int = 25
     num_interventional_train_samples: int = 5
     num_test_interventions: int = 40
     num_interventional_test_samples: int = 5

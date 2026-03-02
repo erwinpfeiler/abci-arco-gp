@@ -12,9 +12,9 @@ from src.mechanism_models.shared_data_gp_model import (
     SharedDataGaussianProcessModel,
 )
 from src.utils.graphs import adj_mat_to_graph
+from src.mechanism_models.mechanisms import get_mechanism_key
+from src.utils.causal_orders import CausalOrder, generate_all_mechanisms, generate_all_parent_sets
 
-# remove
-from tqdm import tqdm, trange
 
 class ExpDesignerABCIArCOGP(ExpDesignerBase):
 
@@ -25,23 +25,23 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         distributed: bool = False,
     ) -> None:
         super().__init__(intervention_bounds, opt_strategy, distributed)
-        self.agent = None
         self.mech_model: Optional[SharedDataGaussianProcessModel] = None
 
     def init_design_process(self, args: dict):
-        """Called once before the first query. Expects:
-           - 'agent': ABCIArCOGP instance
-           - 'mechanism_model': SharedDataGaussianProcessModel
-           - 'policy': 'graph-info-gain'
-           - optional: 'batch_size', 'num_exp_batches_per_graph'
-        """
+        
         assert args["policy"] == "graph-info-gain"
-        print(f"args = {args}")
-        self.agent = args['agent']
         self.mech_model = args['mechanism_model']
-        self.batch_size = args.get("batch_size", 1)
-        self.num_exp_batches_per_graph = args.get("num_exp_batches_per_graph", 1)
-        self.num_mc_graphs = args.get("num_mc_graphs", 5)
+        self.batch_size = args['batch_size']
+        self.num_exp_batches_per_graph = args['num_exp_batches_per_graph']
+
+        self.mc_cos = args['mc_cos']
+        self.adj_mats = args['adj_mats']
+        self.co_weights = args['co_weights']
+        self.sample_time = args['sample_time']
+        self.max_ps_size = args['max_ps_size']
+        self.ps_weight_cache = args['ps_weight_cache']
+        self.env_node_labels = args['env_node_labels']
+        self.mc_adj_masks = args['mc_adj_masks'].contiguous()
 
         def _utility(interventions: Dict[str, float]):
             return self._graph_info_gain(interventions)
@@ -77,16 +77,12 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         Then for each L I sample a set of G called graphs (this will be only used here
         not for G' which we will circumvent by calculating the posterior in closed form)
         """
-        num_mc_graphs = self.num_mc_graphs # TODO: get from args dict
         
         # 1) sample causal orders under p(L | D_E)
-        mc_cos, mc_adj_masks = self.agent.sample_mc_cos(set_data=True)
-        co_weights = self.agent.co_weights
-        adj_mats = self.agent.sample_mc_graphs(mc_cos, mc_adj_masks, num_mc_graphs)
-        """
-        mc_adj_mats : torch.Tensor
-        Adjacency matrices of shape (num_cos, num_mc_graphs, num_nodes, num_nodes)
-        """
+        co_weights = self.co_weights
+        adj_mats = self.adj_mats
+        mc_cos = self.mc_cos
+        sample_time = self.sample_time
     
         num_cos, num_graphs = adj_mats.shape[0:2]
         # 3) normalize order weights: w_L = p(L|D) in linear space
@@ -104,7 +100,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
                 for gidx in range(num_graphs):
                     # build graph and simulate Xt ~ p(Xt | G)
                     graph = adj_mat_to_graph(adj_mats[cidx, gidx], self.mech_model.node_labels)
-                    self.mech_model.init_topological_order(graph, self.agent.sample_time)
+                    self.mech_model.init_topological_order(graph, sample_time)
                     exp = self._simulate_experiment(interventions, graph)
                     # define per-node log predictive under GP for the *sampled* Xt
                     # first clear MLL cache:
@@ -115,9 +111,14 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
                                                         use_cache=True, reduce=True)
 
                     # inner expectation over (L', G' | D) in closed form (returns log E[...] )
-                    inner_exp_log = self.agent.graph_posterior_expectation_factorising(
+                    inner_exp_log = self.graph_posterior_expectation_factorising(
                         func=pred_log_node,
                         mc_cos=mc_cos,
+                        co_weights=co_weights,
+                        env_node_labels=self.env_node_labels,
+                        max_ps_size=self.max_ps_size,
+                        adj_mask=self.mc_adj_masks.contiguous(),
+                        ps_weight_cache=self.ps_weight_cache,
                         logspace=True,
                     )
                     # outer denominator: log p(Xt | G, D)
@@ -143,4 +144,56 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
                     expected_info_gain = expected_info_gain + weight * per_order_avg
 
         return expected_info_gain
+    
+    def graph_posterior_expectation_factorising(self, func: Callable[[str, List[str]], torch.Tensor],
+                                                mc_cos: List[CausalOrder],
+                                                co_weights,
+                                                env_node_labels,
+                                                max_ps_size,
+                                                adj_mask,
+                                                ps_weight_cache,
+                                                logspace=False):
+        """
+        Compute E[ ∏_i f(i, Pa_i) ] under the posterior over (orders, parent‐sets)
+        in closed form (factorising queries).
+
+        Args:
+            func: Maps (node_label, parent_list) → tensor value for that node.
+            mc_cos: Sampled causal orders.
+            logspace: If True, perform computations in log‐space.
+
+        Returns:
+            Tensor: Scalar expectation of the factorising query.
+        """
+
+        num_cos = len(mc_cos)
+        if logspace:
+            co_values = torch.zeros(num_cos)
+        else:
+            co_values = torch.ones(num_cos)
+
+        for cidx, co in enumerate(mc_cos):
+            parent_sets = generate_all_parent_sets(env_node_labels, max_ps_size, adj_mask[cidx])
+            for nidx, node in enumerate(env_node_labels):
+                weighted_values = []
+                for parents in parent_sets[node]:
+                    key = get_mechanism_key(node, parents)
+                    weight = ps_weight_cache[key]
+                    func_value = func(node, parents)
+                    if logspace:
+                        weighted_values.append(weight + func_value)
+                    else:
+                        weighted_values.append(weight.exp() * func_value)
+
+                if logspace:
+                    co_values[cidx] += torch.stack(weighted_values, dim=0).logsumexp(dim=0)
+                else:
+                    co_values[cidx] *= torch.stack(weighted_values, dim=0).sum(dim=0)
+
+        normalisation = co_weights.sum(dim=1).logsumexp(dim=0)
+        if logspace:
+            return co_values.logsumexp(dim=0) - normalisation
+        else:
+            return co_values.sum() / normalisation.exp()
+
 

@@ -631,7 +631,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     output_dir: str = None
     model_name: str = 'abci-arco-gp'
     run_id: str = ''
-    num_experiments: int = 70
+    num_experiments: int = 90
     batch_size: int = 5
     log_interval: int = 1
     num_initial_obs_samples: int = 50 #200
@@ -641,6 +641,10 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     num_mc_graphs: int = 10
     compute_distributional_stats: bool = False
     num_samples_per_graph = 100
+
+    #
+    num_exp_mc_cos = 20
+    num_exp_mc_graphs = 5
 
     # training parameters
     tau: float = 0.1  # score func estimator baseline decay factor
@@ -677,6 +681,9 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
                   'batch_size': self.batch_size,
                   'log_interval': self.log_interval,
                   'num_initial_obs_samples': self.num_initial_obs_samples,
+                  # experimental design parametres
+                  'exp_num_mc_cos': self.num_exp_mc_cos,
+                  'exp_num_mc_graphs': self.num_exp_mc_graphs,
                   # eval parameters
                   'num_mc_cos': self.num_mc_cos,
                   'num_mc_graphs': self.num_mc_graphs,
@@ -716,6 +723,9 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
         self.compute_distributional_stats = param_dict['compute_distributional_stats']
         self.num_samples_per_graph = param_dict['num_samples_per_graph']
 
+        self.num_exp_mc_cos = param_dict["num_exp_mc_cos"]
+        self.num_exp_mc_graphs = param_dict["num_exp_mc_graphs"]
+
         # training parameters
         self.tau = param_dict['tau']
         self.es_threshold = param_dict['es_threshold']
@@ -741,11 +751,11 @@ class EnvironmentConfig:
     non_intervenable_nodes: set = None
 
     generate_static_obs_dataset: bool = True
-    num_observational_train_samples: int = 100
+    num_observational_train_samples: int = 50
     num_observational_test_samples: int = 200
 
     generate_static_intr_dataset: bool = False
-    num_train_interventions: int = 20
+    num_train_interventions: int = 30
     num_interventional_train_samples: int = 5
     num_test_interventions: int = 40
     num_interventional_test_samples: int = 5

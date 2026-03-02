@@ -125,15 +125,26 @@ class ABCIArCOGP(ABCIBase):
                     interventions = self.get_random_intervention(0.)
                 else:
                     if self.cfg.policy == 'graph-info-gain':
-                        batch_size = self.cfg.batch_size          # for the synthetic roll-out
+                        # 1) sample causal orders under p(L | D_E)
+                        mc_cos, mc_adj_masks = self.sample_mc_cos(set_data=True, num_cos=self.cfg.num_exp_mc_cos)
+
+                        co_weights = self.co_weights
+                        adj_mats = self.sample_mc_graphs(mc_cos, mc_adj_masks, self.cfg.num_exp_mc_graphs)
                         args = {
                             'mechanism_model'    : self.mechanism_model,   # full GP model
                             'order_model'        : self.co_model,          # trained ArCO model
                             'policy'             : 'graph-info-gain',
-                            'batch_size'         : 1,
-                            'num_exp_batches_per_graph'  : 1,
-                            'agent'              : self,
-                            'num_mc_graphs'      : self.cfg.num_mc_graphs
+                            'batch_size'         : self.cfg.batch_size,
+                            'num_exp_batches_per_graph'  : 5,
+                            'num_mc_graphs'      : self.cfg.num_mc_graphs,
+                            'mc_cos'             : mc_cos,
+                            'adj_mats'           : adj_mats,
+                            'co_weights'         : co_weights,
+                            'sample_time'        : self.sample_time,
+                            'ps_weight_cache'    : self.ps_weight_cache,
+                            'max_ps_size'        : self.cfg.max_ps_size,
+                            'env_node_labels'    : self.env.node_labels,
+                            'mc_adj_masks'       : mc_adj_masks,
                         }
                     else:
                         assert False, print(f'Invalid policy {self.cfg.policy}!')

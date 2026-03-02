@@ -22,6 +22,8 @@ from src.mechanism_models.mechanisms import get_mechanism_key
 
 
 if __name__=="__main__":
+    
+    raise RuntimeError('SHould not reach this line of code')
 
     # specify the number of nodes 
     num_nodes = 5
