@@ -242,6 +242,12 @@ class SharedDataGaussianProcessModel:
             # gather data from the experiments
             inputs, targets = gather_data(experiments, node, parents=self.node_labels, mode=mode)
 
+            dtype = torch.get_default_dtype()
+            if inputs is not None:
+                inputs = inputs.to(dtype=dtype)
+            if targets is not None:
+                targets = targets.to(dtype=dtype)
+
             # check if we have any data for this node
             mll = torch.tensor(0.)
             if targets is not None:

@@ -127,12 +127,26 @@ def run_worker(rank: int, env: Environment, master_port: str, num_workers: int, 
     os.environ['MASTER_PORT'] = master_port
     torch.set_num_interop_threads(1)
     torch.set_num_threads(1)
+    torch.set_default_dtype(torch.float32)  # or float64 if you prefer
 
     if rank == 0:
+        opts = rpc.TensorPipeRpcBackendOptions(
+            num_worker_threads=32,
+            rpc_timeout=5*3600.0,          # seconds
+            _transports=["uv"],          # <- key fix: disable ibv/shm selection
+            _channels=["basic"],         # stable CPU channel
+            init_method="env://",
+        )
         rpc.init_rpc('Experimenter',
                      rank=rank,
                      world_size=num_workers,
-                     rpc_backend_options=rpc.TensorPipeRpcBackendOptions(num_worker_threads=num_workers, rpc_timeout=0))
+                     rpc_backend_options=rpc.TensorPipeRpcBackendOptions(
+                        num_worker_threads=num_workers,
+                        rpc_timeout=5*3600,
+                        _transports=["uv"],          # <- key fix: disable ibv/shm selection
+                        _channels=["basic"],         # stable CPU channel
+                        init_method="env://",)
+                    )
         try: #TODO: return to try except block once all bugs are fixed
             abci = spawn_model(abci_model, env, num_workers, output_dir, run_id)
             abci.run()
@@ -143,7 +157,13 @@ def run_worker(rank: int, env: Environment, master_port: str, num_workers: int, 
         rpc.init_rpc(f'ExperimentDesigner{rank}',
                      rank=rank,
                      world_size=num_workers,
-                     rpc_backend_options=rpc.TensorPipeRpcBackendOptions(num_worker_threads=num_workers, rpc_timeout=0))
+                     rpc_backend_options=rpc.TensorPipeRpcBackendOptions(
+                        num_worker_threads=num_workers,
+                        rpc_timeout=5*3600,
+                        _transports=["uv"],          # <- key fix: disable ibv/shm selection
+                        _channels=["basic"],         # stable CPU channel
+                        init_method="env://",)
+                    )
 
     rpc.shutdown()
 

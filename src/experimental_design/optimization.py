@@ -163,8 +163,6 @@ def gp_ucb_old(utility: Callable[[torch.Tensor], torch.Tensor], bounds: torch.Te
         print(e)
         print('Continuing with the best candidate from ', candidates)
         print('with utilities ', utilities)
-        print(f"No, now for debugging I will stop here")
-        quit(1)
 
     # return best candidate and objective values
     best_idx = utilities.argmax()

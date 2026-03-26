@@ -4,3 +4,5 @@
 /*data
 /figures
 /notebooks/.ipynb_checkpoints/
+
+*.out

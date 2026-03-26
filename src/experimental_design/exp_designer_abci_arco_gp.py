@@ -14,6 +14,7 @@ from src.mechanism_models.shared_data_gp_model import (
 from src.utils.graphs import adj_mat_to_graph
 from src.mechanism_models.mechanisms import get_mechanism_key
 from src.utils.causal_orders import CausalOrder, generate_all_mechanisms, generate_all_parent_sets
+import time
 
 
 class ExpDesignerABCIArCOGP(ExpDesignerBase):
@@ -41,7 +42,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         self.max_ps_size = args['max_ps_size']
         self.ps_weight_cache = args['ps_weight_cache']
         self.env_node_labels = args['env_node_labels']
-        self.mc_adj_masks = args['mc_adj_masks'].contiguous()
+        self.mc_adj_masks = args['mc_adj_masks']#.contiguous()
 
         def _utility(interventions: Dict[str, float]):
             return self._graph_info_gain(interventions)
@@ -55,8 +56,238 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         """Draw synthetic outcomes X_t ~ p(·|interventions, D_E) (batch omitted)."""
         #self.mech_model.eval()
         return self.mech_model.sample(interventions, self.batch_size, self.num_exp_batches_per_graph, graph=graph)
+    
 
     def _graph_info_gain(
+        self,
+        interventions: Dict[str, float],
+    ) -> torch.Tensor:
+
+        t_total_start = time.perf_counter()
+
+        # ---- timers ----
+        t_graph_build = 0.0
+        t_topo_init = 0.0
+        t_simulate = 0.0
+        t_cache_clear = 0.0
+        t_inner_expectation = 0.0
+        t_outer_mll = 0.0
+        t_loop_total = 0.0
+
+        # 1) sample causal orders under p(L | D_E)
+        co_weights = self.co_weights
+        adj_mats = self.adj_mats
+        mc_cos = self.mc_cos
+        sample_time = self.sample_time
+
+        num_cos, num_graphs = adj_mats.shape[0:2]
+
+        log_w_co = co_weights.sum(dim=1)
+        log_Z = log_w_co.logsumexp(dim=0)
+        w_co = (log_w_co - log_Z).exp()
+
+        with torch.inference_mode():
+
+            expected_info_gain = None
+
+            t_loop_start = time.perf_counter()
+
+            for cidx in range(num_cos):
+
+                per_order_avg = None
+
+                for gidx in range(num_graphs):
+
+                    # ---- graph build ----
+                    t0 = time.perf_counter()
+                    graph = adj_mat_to_graph(
+                        adj_mats[cidx, gidx],
+                        self.mech_model.node_labels
+                    )
+                    t_graph_build += time.perf_counter() - t0
+
+                    # ---- topo init ----
+                    t0 = time.perf_counter()
+                    self.mech_model.init_topological_order(graph, sample_time)
+                    t_topo_init += time.perf_counter() - t0
+
+                    # ---- simulate ----
+                    t0 = time.perf_counter()
+                    exp = self._simulate_experiment(interventions, graph)
+                    t_simulate += time.perf_counter() - t0
+
+                    # ---- clear caches ----
+                    t0 = time.perf_counter()
+                    self.mech_model.clear_posterior_mll_cache()
+                    #self.mech_model.clear_prior_mll_cache()
+                    t_cache_clear += time.perf_counter() - t0
+
+                    def pred_log_node(node: str, parents: list[str], _exp=exp) -> torch.Tensor:
+                        return self.mech_model.node_mll(
+                            [_exp],
+                            node,
+                            parents,
+                            prior_mode=False,
+                            use_cache=True,
+                            reduce=True
+                        )
+
+                    # mll_cache = {}
+                    # def pred_log_node(node, parents, _exp=exp):
+                    #     key = (node, tuple(parents))
+                    #     if key not in mll_cache:
+                    #         mll_cache[key] = self.mech_model.node_mll(
+                    #             [_exp],
+                    #             node,
+                    #             parents,
+                    #             prior_mode=False,
+                    #             use_cache=True,
+                    #             reduce=True
+                    #         )
+                    #     return mll_cache[key]
+
+                    t0 = time.perf_counter()
+                    inner_exp_log = self.graph_posterior_expectation_factorising(
+                        func=pred_log_node,
+                        mc_cos=mc_cos,
+                        co_weights=co_weights,
+                        env_node_labels=self.env_node_labels,
+                        max_ps_size=self.max_ps_size,
+                        adj_mask=self.mc_adj_masks,#.contiguous(),
+                        ps_weight_cache=self.ps_weight_cache,
+                        logspace=True,
+                    )
+                    t_inner_expectation += time.perf_counter() - t0
+
+                    t0 = time.perf_counter()
+                    outer_log = self.mech_model.mll(
+                        [exp],
+                        graph,
+                        prior_mode=False,
+                        use_cache=True,
+                        mode='independent_batches',
+                        reduce=True
+                    )
+
+                    t_outer_mll += time.perf_counter() - t0
+
+                    contrib = inner_exp_log - outer_log
+
+                    if per_order_avg is None:
+                        per_order_avg = contrib / num_graphs
+                    else:
+                        per_order_avg = per_order_avg + (contrib / num_graphs)
+
+                weight = w_co[cidx]
+                if expected_info_gain is None:
+                    expected_info_gain = weight * per_order_avg
+                else:
+                    expected_info_gain = expected_info_gain + weight * per_order_avg
+
+            t_loop_total = time.perf_counter() - t_loop_start
+
+        t_total = time.perf_counter() - t_total_start
+
+        # print("\n========== GRAPH INFO GAIN PROFILE ==========")
+        # print(f"Total time:              {t_total:.4f}s")
+        # print(f"Total loop time:         {t_loop_total:.4f}s")
+        # print(f"Graph building:          {t_graph_build:.4f}s")
+        # print(f"Topo init:               {t_topo_init:.4f}s")
+        # print(f"Simulation:              {t_simulate:.4f}s")
+        # print(f"Cache clearing:          {t_cache_clear:.4f}s")
+        # print(f"Inner expectation:       {t_inner_expectation:.4f}s")
+        # print(f"Outer MLL:               {t_outer_mll:.4f}s")
+        # print("=============================================\n")
+
+        return expected_info_gain
+
+
+    def graph_posterior_expectation_factorising(
+        self,
+        func: Callable[[str, List[str]], torch.Tensor],
+        mc_cos: List[CausalOrder],
+        co_weights,
+        env_node_labels,
+        max_ps_size,
+        adj_mask,
+        ps_weight_cache,
+        logspace=False
+    ):
+
+        t_total_start = time.perf_counter()
+
+        t_parent_set_gen = 0.0
+        t_func_eval = 0.0
+        t_stack = 0.0
+        t_logsumexp = 0.0
+
+        num_cos = len(mc_cos)
+
+        if logspace:
+            co_values = torch.zeros(num_cos)
+        else:
+            co_values = torch.ones(num_cos)
+
+        for cidx, co in enumerate(mc_cos):
+
+            t0 = time.perf_counter()
+            parent_sets = generate_all_parent_sets(
+                env_node_labels,
+                max_ps_size,
+                adj_mask[cidx]
+            )
+            t_parent_set_gen += time.perf_counter() - t0
+
+            for nidx, node in enumerate(env_node_labels):
+
+                weighted_values = []
+
+                for parents in parent_sets[node]:
+
+                    key = get_mechanism_key(node, parents)
+                    weight = ps_weight_cache[key]
+
+                    t0 = time.perf_counter()
+                    func_value = func(node, parents)
+                    t_func_eval += time.perf_counter() - t0
+
+                    if logspace:
+                        weighted_values.append(weight + func_value)
+                    else:
+                        weighted_values.append(weight.exp() * func_value)
+
+                t0 = time.perf_counter()
+                stacked = torch.stack(weighted_values, dim=0)
+                t_stack += time.perf_counter() - t0
+
+                if logspace:
+                    t0 = time.perf_counter()
+                    co_values[cidx] += stacked.logsumexp(dim=0)
+                    t_logsumexp += time.perf_counter() - t0
+                else:
+                    co_values[cidx] *= stacked.sum(dim=0)
+
+        normalisation = co_weights.sum(dim=1).logsumexp(dim=0)
+
+        if logspace:
+            result = co_values.logsumexp(dim=0) - normalisation
+        else:
+            result = co_values.sum() / normalisation.exp()
+
+        t_total = time.perf_counter() - t_total_start
+
+        # print("\n------ POSTERIOR EXPECTATION PROFILE ------")
+        # print(f"Total time:            {t_total:.4f}s")
+        # print(f"Parent set generation: {t_parent_set_gen:.4f}s")
+        # print(f"Func eval (node_mll):  {t_func_eval:.4f}s")
+        # print(f"Stack time:            {t_stack:.4f}s")
+        # print(f"logsumexp time:        {t_logsumexp:.4f}s")
+        # print("-------------------------------------------\n")
+
+        return result
+
+
+    def _graph_info_gain_backup(
         self,
         interventions: Dict[str, float],
     ) -> torch.Tensor:
@@ -117,7 +348,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
                         co_weights=co_weights,
                         env_node_labels=self.env_node_labels,
                         max_ps_size=self.max_ps_size,
-                        adj_mask=self.mc_adj_masks.contiguous(),
+                        adj_mask=self.mc_adj_masks,#.contiguous(),
                         ps_weight_cache=self.ps_weight_cache,
                         logspace=True,
                     )
@@ -145,7 +376,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
 
         return expected_info_gain
     
-    def graph_posterior_expectation_factorising(self, func: Callable[[str, List[str]], torch.Tensor],
+    def graph_posterior_expectation_factorising_backup(self, func: Callable[[str, List[str]], torch.Tensor],
                                                 mc_cos: List[CausalOrder],
                                                 co_weights,
                                                 env_node_labels,

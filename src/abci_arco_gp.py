@@ -16,6 +16,13 @@ from src.utils.metrics import aid, compute_structure_metrics, mmd, earth_movers_
 from src.utils.utils import inf_tensor
 
 from src.experimental_design.exp_designer_abci_arco_gp import ExpDesignerABCIArCOGP
+import time
+
+import sys, time
+
+def mark(msg):
+    sys.stderr.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+    sys.stderr.flush()
 
 
 class ABCIArCOGP(ABCIBase):
@@ -124,6 +131,8 @@ class ABCIArCOGP(ABCIBase):
                 elif self.cfg.policy == 'random-fixed-value':
                     interventions = self.get_random_intervention(0.)
                 else:
+                    mark("after 'Design and perform experiment' print, before branch eval")
+                    print(f"Going into graph info gain...", flush=True)
                     if self.cfg.policy == 'graph-info-gain':
                         # 1) sample causal orders under p(L | D_E)
                         mc_cos, mc_adj_masks = self.sample_mc_cos(set_data=True, num_cos=self.cfg.num_exp_mc_cos)
@@ -147,7 +156,7 @@ class ABCIArCOGP(ABCIBase):
                             'mc_adj_masks'       : mc_adj_masks,
                         }
                     else:
-                        assert False, print(f'Invalid policy {self.cfg.policy}!')
+                        assert False, print(f'Invalid policy {self.cfg.policy}!', flush=True)
                         
                     if self.num_workers > 1: # ignore this case for now
                         interventions = self.design_experiment_distributed(args)
@@ -164,7 +173,7 @@ class ABCIArCOGP(ABCIBase):
 
                 for k,v in self.env.mechanisms.items(): #TODO: somehow this is necessary, ask CT about that
                     v.eval()
-                self.experiments.append(self.env.sample(interventions, batch_size, num_batches=1, prior_mode=True)) #TODO: Erwin added prior_mode=True
+                self.experiments.append(self.env.sample(interventions, batch_size, num_batches=1, prior_mode=False))
 
             # clear caches
             self.mechanism_model.clear_prior_mll_cache()

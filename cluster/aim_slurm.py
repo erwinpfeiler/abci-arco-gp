@@ -29,13 +29,13 @@ DATA_SUBDIRS = [
     # '20_nodes_200_train_linear',
     # '20_nodes_500_train_linear',
     # '20_nodes_1000_train_linear',
-    '16_nodes_debug'
+    '20_nodes_debug'
 ]
 #MODEL = 'abci-arco-gp-random'
 #SIM_TOKEN = 'test-arcogp-random'
 
-#MODEL = 'abci-arco-gp-graph-info'
-#SIM_TOKEN = 'test-arcogp-graph-info'
+MODEL = 'abci-arco-gp-graph-info'
+SIM_TOKEN = 'test-arcogp-graph-info'
 
 #MODEL = 'abci-arco-gp-random-fixed-value'
 #SIM_TOKEN = 'test-arcogp-random-fixed'
@@ -48,9 +48,9 @@ CONFIG = 'example-config.py'
 CONDA_ENV = 'abci-arco-gp'
 NUM_GPUS = 0
 MEM = 30 #30  # in GB
-NUM_RUNS_PER_ENV = 1
+NUM_RUNS_PER_ENV = 3
 
-NUM_WORKERS = 1
+NUM_WORKERS = 21
 
 
 def main():
@@ -94,7 +94,7 @@ def main():
                                 f'#SBATCH --output={os.path.join(logs_dir, MODEL + "-%A-%a.out")}\n',
                                 '#SBATCH --open-mode=append\n',
                                 '#SBATCH --ntasks=1\n'
-                                f'#SBATCH --cpus-per-task={NUM_WORKERS}\n',
+                                f'#SBATCH --cpus-per-task={NUM_WORKERS*2}\n',
                                 '#SBATCH --mail-type=END\n'
                                 '#SBATCH --mail-user=pfeiler@student.tugraz.at\n'
                                 f'#SBATCH --time={TIME}\n',

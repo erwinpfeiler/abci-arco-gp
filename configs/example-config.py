@@ -631,10 +631,10 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     output_dir: str = None
     model_name: str = 'abci-arco-gp'
     run_id: str = ''
-    num_experiments: int = 90
+    num_experiments: int = 50
     batch_size: int = 5
     log_interval: int = 1
-    num_initial_obs_samples: int = 50 #200
+    num_initial_obs_samples: int = 10 #200
 
     # eval parameters
     num_mc_cos: int = 100 # 100
@@ -751,7 +751,7 @@ class EnvironmentConfig:
     non_intervenable_nodes: set = None
 
     generate_static_obs_dataset: bool = True
-    num_observational_train_samples: int = 50
+    num_observational_train_samples: int = 100
     num_observational_test_samples: int = 200
 
     generate_static_intr_dataset: bool = False
