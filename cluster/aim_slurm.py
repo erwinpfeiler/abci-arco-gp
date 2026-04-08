@@ -29,7 +29,7 @@ DATA_SUBDIRS = [
     # '20_nodes_200_train_linear',
     # '20_nodes_500_train_linear',
     # '20_nodes_1000_train_linear',
-    '20_nodes_debug'
+    '10_nodes_debug'
 ]
 #MODEL = 'abci-arco-gp-random'
 #SIM_TOKEN = 'test-arcogp-random'
@@ -50,7 +50,7 @@ NUM_GPUS = 0
 MEM = 30 #30  # in GB
 NUM_RUNS_PER_ENV = 3
 
-NUM_WORKERS = 21
+NUM_WORKERS = 11
 
 
 def main():

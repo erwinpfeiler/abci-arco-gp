@@ -1,11 +1,29 @@
 import math
 import os
+from collections import Counter
 from typing import Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
 import scipy.stats as sst
 import torch
+
+
+# Stats that are expected to track outer experiment progress and therefore
+# should usually have one entry per experiment/checkpoint.
+_PROGRESS_STAT_PRIORITY = (
+    'eshd',
+    'aaid',
+    'paid',
+    'order_aid',
+    'oset_aid',
+    'enum_edges',
+    'precision',
+    'recall',
+    'f1',
+    'tpr',
+    'fpr',
+)
 
 
 def init_plot_style():
@@ -58,6 +76,85 @@ def parse_file_name(filename: str):
     return env_id, run_id, exp_num, result_type
 
 
+def _infer_progress_length_from_stats(stats: dict):
+    """Infer the outer experiment progress length from a checkpoint stats dict.
+
+    Many checkpoint files contain both per-experiment statistics (length should
+    match the experiment number in the filename) and inner-optimization traces
+    such as `arco_loss` that can be much longer. To avoid false positives, we
+    first look for well-known per-experiment statistics; if none are present, we
+    fall back to the most common 1D length across stats entries.
+    """
+    for key in _PROGRESS_STAT_PRIORITY:
+        if key in stats:
+            try:
+                return len(stats[key]), key
+            except TypeError:
+                pass
+
+    length_counter = Counter()
+    example_key_for_length = {}
+    for key, value in stats.items():
+        try:
+            length = len(value)
+        except TypeError:
+            continue
+        length_counter[length] += 1
+        example_key_for_length.setdefault(length, key)
+
+    if not length_counter:
+        return None, None
+
+    inferred_length, _ = length_counter.most_common(1)[0]
+    return inferred_length, example_key_for_length[inferred_length]
+
+
+def _validate_file_length_matches_experiment(file_path: str, exp_num: int):
+    """Check that a result/checkpoint file is internally consistent with its filename.
+
+    For CSV files, this checks that the file has exactly `exp_num` rows.
+    For PTH files, this checks that the inferred per-experiment stats length
+    matches `exp_num`.
+
+    Returns:
+        Optional[str]: Warning message if a mismatch is found, else None.
+    """
+    _, ext = os.path.splitext(file_path)
+    ext = ext.lower()
+
+    if ext == '.csv':
+        try:
+            num_rows = len(pd.read_csv(file_path))
+        except Exception as exc:
+            return f'Could not read CSV {file_path} for length check: {exc}'
+
+        if num_rows != exp_num:
+            return (f'Length mismatch for CSV {os.path.basename(file_path)}: '
+                    f'filename says exp={exp_num}, but file has {num_rows} rows.')
+        return None
+
+    if ext == '.pth':
+        try:
+            param_dict = torch.load(file_path, map_location='cpu')
+        except Exception as exc:
+            return f'Could not read checkpoint {file_path} for length check: {exc}'
+
+        if not isinstance(param_dict, dict) or 'stats' not in param_dict:
+            return f'Checkpoint {os.path.basename(file_path)} does not contain a stats dict.'
+
+        inferred_length, basis_key = _infer_progress_length_from_stats(param_dict['stats'])
+        if inferred_length is None:
+            return f'Could not infer experiment length from checkpoint {os.path.basename(file_path)}.'
+
+        if inferred_length != exp_num:
+            return (f'Length mismatch for checkpoint {os.path.basename(file_path)}: '
+                    f'filename says exp={exp_num}, but inferred stats length is {inferred_length} '
+                    f'(based on key {basis_key!r}).')
+        return None
+
+    return None
+
+
 class Simulation:
     def __init__(self, results_dir: str, num_experiments: int, file_type: str = '.csv',
                  plot_kwargs: Optional[dict] = None):
@@ -71,24 +168,64 @@ class Simulation:
 
     def get_result_files(self, result_type: str = 'default'):
         results_dir = self.results_dir
-        files = [entry for entry in os.scandir(results_dir) if
-                 entry.is_file() and os.path.basename(entry)[-4:] == self.file_type]
+        files = [entry.path for entry in os.scandir(results_dir)
+                 if entry.is_file() and os.path.basename(entry.path)[-4:] == self.file_type]
 
         result_files = dict()
-        for f in files:
-            env_id, run_id, exp_num, res_type = parse_file_name(os.path.basename(f))
-            if exp_num != self.num_experiments or res_type != result_type:
-                if exp_num != self.num_experiments:
-                    print(f"Num exp found {exp_num} does not match num exp set {self.num_experiments}")
+        available_exp_nums = set()
+        available_result_types = set()
+        validation_messages = []
 
-                if res_type != result_type:
-                    print(f"res_type found {res_type} does not match expected result_type {result_type}")
+        for file_path in files:
+            file_name = os.path.basename(file_path)
+            try:
+                env_id, run_id, exp_num, res_type = parse_file_name(file_name)
+            except Exception as exc:
+                print(f'Could not parse file name {file_name}: {exc}')
                 continue
 
-            if env_id in result_files:
-                result_files[env_id].append(os.path.abspath(f))
+            if res_type == result_type:
+                available_exp_nums.add(exp_num)
             else:
-                result_files[env_id] = [os.path.abspath(f)]
+                available_result_types.add(res_type)
+                continue
+
+            if exp_num != self.num_experiments:
+                # Intermediate checkpoint files are expected when one file is
+                # written per experiment. Silently ignore them as long as the
+                # requested experiment exists.
+                continue
+
+            validation_message = _validate_file_length_matches_experiment(file_path, exp_num)
+            if validation_message is not None:
+                validation_messages.append(validation_message)
+
+            # If we are plotting from CSVs, also validate the matching checkpoint
+            # file, if it exists, because the user asked for an explicit check of
+            # the corresponding `-n.pth` file.
+            if self.file_type == '.csv':
+                checkpoint_path = os.path.splitext(file_path)[0] + '.pth'
+                if os.path.exists(checkpoint_path):
+                    validation_message = _validate_file_length_matches_experiment(checkpoint_path, exp_num)
+                    if validation_message is not None:
+                        validation_messages.append(validation_message)
+
+            if env_id in result_files:
+                result_files[env_id].append(os.path.abspath(file_path))
+            else:
+                result_files[env_id] = [os.path.abspath(file_path)]
+
+        if not result_files:
+            available_exp_nums_str = sorted(available_exp_nums)
+            print(f'No matching {self.file_type} files found for exp={self.num_experiments} '
+                  f'and result_type={result_type} in {self.results_dir}')
+            if available_exp_nums_str:
+                print(f'Available experiment numbers for result_type={result_type}: {available_exp_nums_str}')
+            if available_result_types:
+                print(f'Available other result types: {sorted(available_result_types)}')
+
+        for message in validation_messages:
+            print(message)
 
         return result_files
 

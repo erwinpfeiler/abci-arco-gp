@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Callable
 
 import networkx as nx
 import torch
@@ -171,7 +171,8 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
 
                     t_outer_mll += time.perf_counter() - t0
 
-                    contrib = inner_exp_log - outer_log
+                    #contrib = inner_exp_log - outer_log # this has the wrong sign
+                    contrib = outer_log - inner_exp_log # this has correct signs!
 
                     if per_order_avg is None:
                         per_order_avg = contrib / num_graphs
