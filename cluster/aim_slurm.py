@@ -3,8 +3,8 @@ import time
 from datetime import datetime
 
 PARTITIONS = 'normal'
-EXCLUDE = 'aim-gpu[1,3-4]'
-TIME = '23:59:59'
+EXCLUDE = 'aim-gpu[3-4]'
+TIME = '4-23:59:59'
 
 ##################################################
 # PATHS
@@ -29,16 +29,20 @@ DATA_SUBDIRS = [
     # '20_nodes_200_train_linear',
     # '20_nodes_500_train_linear',
     # '20_nodes_1000_train_linear',
-    '10_nodes_debug'
+    '10_nodes_final'
 ]
-#MODEL = 'abci-arco-gp-random'
-#SIM_TOKEN = 'test-arcogp-random'
-
-MODEL = 'abci-arco-gp-graph-info'
-SIM_TOKEN = 'test-arcogp-graph-info'
+MODEL = 'abci-arco-gp-random'
+SIM_TOKEN = 'test-arcogp-random'
 
 #MODEL = 'abci-arco-gp-random-fixed-value'
 #SIM_TOKEN = 'test-arcogp-random-fixed'
+
+#MODEL = 'abci-arco-gp-graph-info'
+#SIM_TOKEN = 'test-arcogp-graph-info'
+
+#MODEL = 'abci-arco-gp-model-info'
+#SIM_TOKEN = 'test-arcogp-model-info'
+
 
 CONFIG = 'example-config.py'
 ##################################################
@@ -47,10 +51,10 @@ CONFIG = 'example-config.py'
 # SIMULATION SETUP
 CONDA_ENV = 'abci-arco-gp'
 NUM_GPUS = 0
-MEM = 30 #30  # in GB
-NUM_RUNS_PER_ENV = 3
+MEM = 100 #30  # in GB
+NUM_RUNS_PER_ENV = 1 #FIXME: change back to 3 for benchmarking
 
-NUM_WORKERS = 11
+NUM_WORKERS = 1
 
 
 def main():

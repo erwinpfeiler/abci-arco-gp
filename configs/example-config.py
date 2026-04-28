@@ -631,15 +631,15 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     output_dir: str = None
     model_name: str = 'abci-arco-gp'
     run_id: str = ''
-    num_experiments: int = 30
+    num_experiments: int = 5
     batch_size: int = 5
     log_interval: int = 1
     num_initial_obs_samples: int = 10 #200
 
     # eval parameters
     num_mc_cos: int = 100 # 100
-    num_mc_graphs: int = 10
-    compute_distributional_stats: bool = False
+    num_mc_graphs: int = 40
+    compute_distributional_stats: bool = True
     num_samples_per_graph = 100
 
     #
@@ -754,13 +754,13 @@ class EnvironmentConfig:
     num_observational_train_samples: int = 100
     num_observational_test_samples: int = 200
 
-    generate_static_intr_dataset: bool = False
-    num_train_interventions: int = 30
-    num_interventional_train_samples: int = 5
+    generate_static_intr_dataset: bool = True
+    num_train_interventions: int = 0 #30
+    num_interventional_train_samples: int = 0 #5
     num_test_interventions: int = 40
     num_interventional_test_samples: int = 5
 
-    generate_test_queries: bool = False
+    generate_test_queries: bool = True
     num_test_queries: int = 30
     interventional_queries: Optional[List[InterventionalDistributionsQuery]] = None
     imll_mc_samples: int = 50  # number of ancestral mc samples to estimate an interventional mll

@@ -1,7 +1,6 @@
 from typing import List, Tuple, Dict, Any, Optional
 
-import torch.nn
-
+import torch
 from src.environments.experiment import InterventionalDistributionsQuery
 
 
@@ -25,6 +24,21 @@ class DiBSConfig:
         self.num_particles = param_dict['num_particles']
         self.prior_scale = param_dict['prior_scale']
 
+
+class MLPConfig:
+    hidden_layer_sizes: List[int] = [100, 100]
+    activation: torch.nn.Module = torch.nn.Sigmoid
+
+    # prior hyperparameters
+    noise_var_concentration: float = 100.
+    noise_var_rate: float = 10.
+
+    def param_dict(self) -> Dict[str, Any]:
+        params = {'hidden_layer_sizes': self.hidden_layer_sizes,
+                  'activation': self.activation,
+                  'noise_var_concentration': self.noise_var_concentration,
+                  'noise_var_rate': self.noise_var_rate}
+        return params
 
 class ArCOConfig:
     map_mode: str = 'mlp'  # available 'mlp' and 'simple'
@@ -81,8 +95,8 @@ class GaussianRootNodeConfig:
 
 class AdditiveSigmoidsConfig:
     # prior hyperparameters
-    noise_var_concentration: float = 5.
-    noise_var_rate: float = 5.
+    noise_var_concentration: float = 50.
+    noise_var_rate: float = 50.
     lscale_lower: float = 0.5
     lscale_upper: float = 2.
     offset_lower: float = -2.
@@ -110,29 +124,6 @@ class AdditiveSigmoidsConfig:
         self.offset_upper = param_dict['offset_upper']
         self.outscale_rate = param_dict['outscale_rate']
         self.outscale_concentration = param_dict['outscale_concentration']
-
-
-class MLPConfig:
-    hidden_layer_sizes: List[int] = [100, 100]
-    activation: torch.nn.Module = torch.nn.Sigmoid
-
-    # prior hyperparameters
-    noise_var_concentration: float = 100.
-    noise_var_rate: float = 10.
-
-    def param_dict(self) -> Dict[str, Any]:
-        params = {'hidden_layer_sizes': self.hidden_layer_sizes,
-                  'activation': self.activation,
-                  'noise_var_concentration': self.noise_var_concentration,
-                  'noise_var_rate': self.noise_var_rate}
-        return params
-
-    def load_param_dict(self, param_dict):
-        self.hidden_layer_sizes = param_dict['hidden_layer_sizes']
-        self.activation = param_dict['activation']
-
-        self.noise_var_concentration = param_dict['noise_var_concentration']
-        self.noise_var_rate = param_dict['noise_var_rate']
 
 
 class GaussianProcessConfig:
@@ -218,6 +209,71 @@ class GaussianProcessConfig:
         self.offset_loc = param_dict['offset_loc']
         self.offset_scale = param_dict['offset_scale']
 
+class GaussianProcessConfig_old:
+    # general setup
+    per_dim_lenghtscale: bool = True
+    kernel: str = 'rq'  # available: 'linear', 'rq', 'additive-rq'; not all types may be available for all GP classes
+
+    # setup for sampling ground-truth mechanisms
+    num_support_points: int = 50
+    support_min: float = -10.
+    support_max: float = 10.
+
+    # hyper-prior params for ground-truth model generation
+    # noise_var_concentration: float = 50.
+    # noise_var_rate: float = 50.
+    # outscale_concentration: float = 100.
+    # outscale_rate: float = 10.
+    # lscale_concentration_multiplier: float = 30.
+    # lscale_rate: float = 30.
+    # scale_mix_concentration: float = 20.
+    # scale_mix_rate: float = 10.
+    # offset_loc: float = 0.
+    # offset_scale: float = 3.
+
+    # hyper-prior params for inference (normalised data)
+    noise_var_concentration: float = 2.
+    noise_var_rate: float = 8.
+    outscale_concentration: float = 100.
+    outscale_rate: float = 10.
+    lscale_concentration_multiplier: float = 30.
+    lscale_rate: float = 30.
+    scale_mix_concentration: float = 20.
+    scale_mix_rate: float = 10.
+    offset_loc: float = 0.
+    offset_scale: float = 0.5
+
+    def param_dict(self) -> Dict[str, Any]:
+        params = {'per_dim_lenghtscale': self.per_dim_lenghtscale,
+                  'kernel': self.kernel,
+                  'num_support_points': self.num_support_points,
+                  'support_min': self.support_min,
+                  'support_max': self.support_max,
+                  'noise_var_concentration': self.noise_var_concentration,
+                  'noise_var_rate': self.noise_var_rate,
+                  'outscale_concentration': self.outscale_concentration,
+                  'outscale_rate': self.outscale_rate,
+                  'lscale_concentration_multiplier': self.lscale_concentration_multiplier,
+                  'lscale_rate': self.lscale_rate,
+                  'scale_mix_concentration': self.scale_mix_concentration,
+                  'scale_mix_rate': self.scale_mix_rate}
+        return params
+
+    def load_param_dict(self, param_dict):
+        self.per_dim_lenghtscale = param_dict['per_dim_lenghtscale']
+        self.kernel = param_dict['kernel']
+        self.num_support_points = param_dict['num_support_points']
+        self.support_min = param_dict['support_min']
+        self.support_max = param_dict['support_max']
+        self.noise_var_concentration = param_dict['noise_var_concentration']
+        self.noise_var_rate = param_dict['noise_var_rate']
+        self.outscale_concentration = param_dict['outscale_concentration']
+        self.outscale_rate = param_dict['outscale_rate']
+        self.lscale_concentration_multiplier = param_dict['lscale_concentration_multiplier']
+        self.lscale_rate = param_dict['lscale_rate']
+        self.scale_mix_concentration = param_dict['scale_mix_concentration']
+        self.scale_mix_rate = param_dict['scale_mix_rate']
+
 
 class GPModelConfig:
     imll_mc_samples: int = 50  # number of ancestral mc samples to estimate an interventional mll
@@ -285,6 +341,7 @@ class ABCIFixedGraphGPConfig(ABCIBaseConfig):
     # general config
     policy: str = 'static-obs-dataset'
     num_workers: int = 1
+    inference_mode: str = 'joint'  # 'joint' and 'graph_marginal' available
 
     # run config
     checkpoint_interval: int = 10
@@ -309,10 +366,12 @@ class ABCIFixedGraphGPConfig(ABCIBaseConfig):
         if param_dict is not None:
             self.load_param_dict(param_dict)
         super().__init__()
+        assert self.inference_mode in {'joint', 'graph_marginal'}
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'policy': self.policy,
                   'num_workers': self.num_workers,
+                  'inference_mode': self.inference_mode,
                   'checkpoint_interval': self.checkpoint_interval,
                   'output_dir': self.output_dir,
                   'model_name': self.model_name,
@@ -328,6 +387,7 @@ class ABCIFixedGraphGPConfig(ABCIBaseConfig):
     def load_param_dict(self, param_dict):
         self.policy = param_dict['policy']
         self.num_workers = param_dict['num_workers']
+        self.inference_mode = param_dict['inference_mode']
         self.checkpoint_interval = param_dict['checkpoint_interval']
         self.output_dir = param_dict['output_dir']
         self.model_name = param_dict['model_name']
@@ -344,6 +404,7 @@ class ABCICategoricalGPConfig(ABCIBaseConfig):
     # general config
     policy: str = 'observational'
     num_workers: int = 1
+    inference_mode: str = 'joint'  # 'joint' and 'graph_marginal' available
 
     # experimental design
     opt_strategy: str = 'gp-ucb'
@@ -372,10 +433,12 @@ class ABCICategoricalGPConfig(ABCIBaseConfig):
         if param_dict is not None:
             self.load_param_dict(param_dict)
         super().__init__()
+        assert self.inference_mode in {'joint', 'graph_marginal'}
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'policy': self.policy,
                   'num_workers': self.num_workers,
+                  'inference_mode': self.inference_mode,
                   'opt_strategy': self.opt_strategy,
                   'num_exp_per_graph': self.num_exp_per_graph,
                   'num_mc_queries': self.num_mc_queries,
@@ -395,6 +458,7 @@ class ABCICategoricalGPConfig(ABCIBaseConfig):
     def load_param_dict(self, param_dict):
         self.policy = param_dict['policy']
         self.num_workers = param_dict['num_workers']
+        self.inference_mode = param_dict['inference_mode']
         self.opt_strategy = param_dict['opt_strategy']
         self.num_exp_per_graph = param_dict['num_exp_per_graph']
         self.num_mc_queries = param_dict['num_mc_queries']
@@ -414,6 +478,7 @@ class ABCICategoricalGPConfig(ABCIBaseConfig):
 class ABCIDiBSGPConfig(ABCIBaseConfig):
     # general config
     policy: str = 'static-obs-dataset'
+    inference_mode: str = 'joint'  # 'joint' and 'particle_marginal' available
     num_workers: int = 1
     dibs_plus: bool = True
     num_particles: int = 10
@@ -469,9 +534,11 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
         if param_dict is not None:
             self.load_param_dict(param_dict)
         super().__init__()
+        assert self.inference_mode in {'joint', 'particle_marginal'}
 
     def param_dict(self) -> Dict[str, Any]:
         params = {'policy': self.policy,
+                  'inference_mode': self.inference_mode,
                   'num_workers': self.num_workers,
                   'dibs_plus': self.dibs_plus,
                   'num_particles': self.num_particles,
@@ -513,6 +580,7 @@ class ABCIDiBSGPConfig(ABCIBaseConfig):
 
     def load_param_dict(self, param_dict):
         self.policy = param_dict['policy']
+        self.inference_mode = param_dict['inference_mode']
         self.num_workers = param_dict['num_workers']
         self.dibs_plus = param_dict['dibs_plus']
         self.num_particles = param_dict['num_particles']
@@ -563,16 +631,20 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     output_dir: str = None
     model_name: str = 'abci-arco-gp'
     run_id: str = ''
-    num_experiments: int = 1
-    batch_size: int = 1
+    num_experiments: int = 5
+    batch_size: int = 5
     log_interval: int = 1
-    num_initial_obs_samples: int = 20 #200
+    num_initial_obs_samples: int = 10 #200
 
     # eval parameters
-    num_mc_cos: int = 20 # 100
+    num_mc_cos: int = 100 # 100
     num_mc_graphs: int = 10
-    compute_distributional_stats: bool = False
+    compute_distributional_stats: bool = True
     num_samples_per_graph = 100
+
+    #
+    num_exp_mc_cos = 20
+    num_exp_mc_graphs = 5
 
     # training parameters
     tau: float = 0.1  # score func estimator baseline decay factor
@@ -609,6 +681,9 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
                   'batch_size': self.batch_size,
                   'log_interval': self.log_interval,
                   'num_initial_obs_samples': self.num_initial_obs_samples,
+                  # experimental design parametres
+                  'exp_num_mc_cos': self.num_exp_mc_cos,
+                  'exp_num_mc_graphs': self.num_exp_mc_graphs,
                   # eval parameters
                   'num_mc_cos': self.num_mc_cos,
                   'num_mc_graphs': self.num_mc_graphs,
@@ -648,6 +723,9 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
         self.compute_distributional_stats = param_dict['compute_distributional_stats']
         self.num_samples_per_graph = param_dict['num_samples_per_graph']
 
+        self.num_exp_mc_cos = param_dict["num_exp_mc_cos"]
+        self.num_exp_mc_graphs = param_dict["num_exp_mc_graphs"]
+
         # training parameters
         self.tau = param_dict['tau']
         self.es_threshold = param_dict['es_threshold']
@@ -674,15 +752,15 @@ class EnvironmentConfig:
 
     generate_static_obs_dataset: bool = True
     num_observational_train_samples: int = 100
-    num_observational_test_samples: int = 0
+    num_observational_test_samples: int = 200
 
-    generate_static_intr_dataset: bool = False
-    num_train_interventions: int = 25
-    num_interventional_train_samples: int = 5
+    generate_static_intr_dataset: bool = True
+    num_train_interventions: int = 0 #30
+    num_interventional_train_samples: int = 0 #5
     num_test_interventions: int = 40
     num_interventional_test_samples: int = 5
 
-    generate_test_queries: bool = False
+    generate_test_queries: bool = True
     num_test_queries: int = 30
     interventional_queries: Optional[List[InterventionalDistributionsQuery]] = None
     imll_mc_samples: int = 50  # number of ancestral mc samples to estimate an interventional mll

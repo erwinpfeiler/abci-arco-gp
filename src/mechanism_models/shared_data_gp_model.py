@@ -53,6 +53,7 @@ class SharedDataGaussianProcessModel:
         self.prior_mll_cache = dict()
         self.posterior_mll_cache = dict()
         self.rmse_cache = dict()
+        self.entropy_cache = dict()
 
     def get_parameters(self, keys: List[str] = None):
         params = [gp.get_parameters(keys) for gp in self.gps.values()]
@@ -193,6 +194,15 @@ class SharedDataGaussianProcessModel:
                 if key in self.rmse_cache:
                     del self.rmse_cache[key]
 
+    # ERWIN
+    def clear_entropy_cache(self, keys: List[str] = None):
+        if keys is None:
+            self.entropy_cache.clear()
+        else:
+            for key in keys:
+                if key in self.entropy_cache:
+                    del self.entropy_cache[key]
+
     def apply_mechanism(self, inputs: torch.Tensor, key: str) -> torch.Tensor:
         node, parents = resolve_mechanism_key(key)
         if len(parents) == 0:
@@ -295,6 +305,32 @@ class SharedDataGaussianProcessModel:
                 log_priors += self.gps[node].hyperparam_log_prior(key)
 
         return log_priors
+    
+    
+    # ERWIN: expected_noise_entropy is needed for SCM info gain a.k.a. model-info-gain
+    def expected_noise_entropy(self, interventions, graph: nx.DiGraph, use_cache=False):
+        
+        entropy = torch.tensor(0., dtype=torch.get_default_dtype())
+        for node in self.node_labels:
+            if node in interventions:
+                continue
+
+            parents = get_parents(node, graph)
+            key = get_mechanism_key(node, parents)
+
+            if use_cache and key in self.entropy_cache:
+                mechanism_entropy = self.entropy_cache[key]
+            else:
+                if len(parents) == 0:
+                    mechanism_entropy = self.root_mechs[node].expected_noise_entropy(prior_mode=False)
+                else:
+                    mechanism_entropy = self.gps[node].expected_noise_entropy(key)
+                if use_cache:
+                    self.entropy_cache[key] = mechanism_entropy
+
+            entropy = entropy + mechanism_entropy
+
+        return entropy
 
     def get_num_gps(self, sample_time: int = None):
         if sample_time is None:

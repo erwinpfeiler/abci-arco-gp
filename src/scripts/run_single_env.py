@@ -26,7 +26,8 @@ from src.utils.graphs import adj_mat_to_graph, get_graph_key
 MODELS = {'abci-categorical-gp', 'abci-dibs-gp', 'abci-arco-gp',
           'anm', 'ges', 'daggnn', 'gadget', 'gae', 'golem', 'grandag', 'grasp', 'pc', 'resit', 'beeps',
           'abci-resit-gp', 'abci-true-graph-gp',
-          'abci-arco-gp-random', 'abci-arco-gp-graph-info', 'abci-arco-gp-random-fixed-value'}
+          'abci-arco-gp-random', 'abci-arco-gp-graph-info', 'abci-arco-gp-random-fixed-value',
+          'abci-arco-gp-model-info'}
 
 
 def spawn_model(model: str, env: Environment, num_workers: int, output_dir: str, run_id: str):
@@ -73,6 +74,14 @@ def spawn_model(model: str, env: Environment, num_workers: int, output_dir: str,
         cfg.output_dir = output_dir
         cfg.run_id = run_id
         cfg.policy = 'graph-info-gain'
+        return ABCIArCOGP(env, cfg)
+
+    elif model == 'abci-arco-gp-model-info':
+        cfg = ABCIArCOGPConfig()
+        cfg.num_workers = num_workers
+        cfg.output_dir = output_dir
+        cfg.run_id = run_id
+        cfg.policy = 'model-info-gain'
         return ABCIArCOGP(env, cfg)
 
     elif model == 'abci-resit-gp':

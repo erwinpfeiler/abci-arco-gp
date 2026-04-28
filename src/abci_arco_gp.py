@@ -133,7 +133,7 @@ class ABCIArCOGP(ABCIBase):
                 else:
                     mark("after 'Design and perform experiment' print, before branch eval")
                     print(f"Going into graph info gain...", flush=True)
-                    if self.cfg.policy == 'graph-info-gain':
+                    if self.cfg.policy in ('graph-info-gain', 'model-info-gain'):
                         # 1) sample causal orders under p(L | D_E)
                         mc_cos, mc_adj_masks = self.sample_mc_cos(set_data=True, num_cos=self.cfg.num_exp_mc_cos)
 
@@ -142,7 +142,7 @@ class ABCIArCOGP(ABCIBase):
                         args = {
                             'mechanism_model'    : self.mechanism_model,   # full GP model
                             'order_model'        : self.co_model,          # trained ArCO model
-                            'policy'             : 'graph-info-gain',
+                            'policy'             : self.cfg.policy,
                             'batch_size'         : self.cfg.batch_size,
                             'num_exp_batches_per_graph'  : 5,
                             'num_mc_graphs'      : self.cfg.num_mc_graphs,
@@ -785,7 +785,7 @@ class ABCIArCOGP(ABCIBase):
                 emds = []
                 with torch.no_grad():
                     for eidx, exp in enumerate(self.env.interventional_test_data):
-                        print(f'Computing metrics for intervention {eidx}/{len(self.env.interventional_test_data)}')
+                        print(f'Computing metrics for intervention {eidx}/{len(self.env.interventional_test_data)}', flush=True)
                         env_samples = torch.stack([exp.data[node].squeeze() for node in self.env.node_labels], dim=-1)
                         env_mean = env_samples.mean(dim=0)
 
