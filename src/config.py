@@ -661,7 +661,7 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     @classmethod
     def check_policy(cls, policy: str):
         assert policy in {'observational', 'random', 'random-fixed-value', 'static-obs-dataset',
-                          'static-intr-dataset','graph-info-gain'}, policy
+                          'static-intr-dataset', 'graph-info-gain', 'model-info-gain', 'scm-info-gain'}, policy
 
     def __init__(self, param_dict: Dict[str, Any] = None):
         if param_dict is not None:

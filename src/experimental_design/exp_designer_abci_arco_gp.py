@@ -27,12 +27,13 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
     ) -> None:
         super().__init__(intervention_bounds, opt_strategy, distributed)
         self.mech_model: Optional[SharedDataGaussianProcessModel] = None
+        self.entropy_cache: Dict[str, torch.Tensor] = {}
 
     def init_design_process(self, args: dict):
-        
         self.mech_model = args['mechanism_model']
         self.batch_size = args['batch_size']
         self.num_exp_batches_per_graph = args['num_exp_batches_per_graph']
+        self.policy = args['policy']
 
         self.mc_cos = args['mc_cos']
         self.adj_mats = args['adj_mats']
@@ -42,9 +43,14 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
         self.ps_weight_cache = args['ps_weight_cache']
         self.env_node_labels = args['env_node_labels']
         self.mc_adj_masks = args['mc_adj_masks']#.contiguous()
+        self.entropy_cache.clear()
 
         def _utility(interventions: Dict[str, float]):
-            return self._graph_info_gain(interventions)
+            if self.policy == 'graph-info-gain':
+                return self._graph_info_gain(interventions)
+            if self.policy in {'model-info-gain', 'scm-info-gain'}:
+                return self._model_info_gain(interventions)
+            raise ValueError(f'Invalid policy {self.policy!r} for ExpDesignerABCIArCOGP.')
         self.utility = _utility
 
     def _simulate_experiment(
@@ -129,7 +135,8 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
                         reduce=True
                     )
 
-                    contrib = outer_log - inner_exp_log # this has correct signs!
+                    # Average over simulated batches to match the DiBS objective.
+                    contrib = (outer_log - inner_exp_log) / self.num_exp_batches_per_graph
 
                     if per_order_avg is None:
                         per_order_avg = contrib / num_graphs
@@ -243,7 +250,7 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
                         logspace=True,
                     )
 
-                    # E_{X_t|M}[ log p(X_t | M) ] = - N_t * expected_noise_entropy(M)
+                    # E_{X_t|M}[ log p(X_t | M) ] for the full simulated experiment.
                     entropy = self.mech_model.expected_noise_entropy(
                         interventions,
                         graph,
@@ -251,8 +258,8 @@ class ExpDesignerABCIArCOGP(ExpDesignerBase):
                     )
                     outer_log = -total_num_samples * entropy
 
-                    # correct sign: self term minus posterior-predictive mixture term
-                    contrib = outer_log - inner_exp_log
+                    # Average over simulated batches to match the DiBS objective.
+                    contrib = (outer_log - inner_exp_log) / self.num_exp_batches_per_graph
 
                     if per_order_avg is None:
                         per_order_avg = contrib / num_graphs

@@ -133,7 +133,7 @@ class ABCIArCOGP(ABCIBase):
                 else:
                     mark("after 'Design and perform experiment' print, before branch eval")
                     print(f"Going into graph info gain...", flush=True)
-                    if self.cfg.policy in ('graph-info-gain', 'model-info-gain'):
+                    if self.cfg.policy in ('graph-info-gain', 'model-info-gain', 'scm-info-gain'):
                         # 1) sample causal orders under p(L | D_E)
                         mc_cos, mc_adj_masks = self.sample_mc_cos(set_data=True, num_cos=self.cfg.num_exp_mc_cos)
 
