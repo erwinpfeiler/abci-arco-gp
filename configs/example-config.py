@@ -637,10 +637,10 @@ class ABCIArCOGPConfig(ABCIBaseConfig):
     num_initial_obs_samples: int = 10 #200
 
     # eval parameters
-    num_mc_cos: int = 100 # 100
-    num_mc_graphs: int = 40
+    num_mc_cos: int = 80 # 100
+    num_mc_graphs: int = 20
     compute_distributional_stats: bool = True
-    num_samples_per_graph = 100
+    num_samples_per_graph = 5
 
     #
     num_exp_mc_cos = 20
@@ -757,7 +757,7 @@ class EnvironmentConfig:
     generate_static_intr_dataset: bool = True
     num_train_interventions: int = 0 #30
     num_interventional_train_samples: int = 0 #5
-    num_test_interventions: int = 40
+    num_test_interventions: int = 3 # per node
     num_interventional_test_samples: int = 5
 
     generate_test_queries: bool = True
